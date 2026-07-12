@@ -1,0 +1,119 @@
+name: Build Windows Executable
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller toml
+
+      - name: Verify gmsh installation
+        run: |
+          python -c "import gmsh; print('gmsh version:', gmsh.__version__)"
+
+      - name: Cache PyInstaller build
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: ${{ runner.os }}-pyinstaller-${{ hashFiles('obara-3d-parser.spec', 'requirements.txt') }}
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --noconfirm --distpath dist --workpath build obara-3d-parser.spec
+
+      - name: Verify build
+        run: |
+          if (Test-Path "dist/obara-3d-parser/obara-3d-parser.exe") {
+              $size = (Get-Item "dist/obara-3d-parser/obara-3d-parser.exe").Length / 1MB
+              Write-Host "EXE created: $([math]::Round($size, 1)) MB"
+          } else {
+              Write-Error "EXE not found!"
+              exit 1
+          }
+
+      - name: Get version from pyproject.toml
+        id: get_version
+        run: |
+          $version = (python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          Write-Host "Version: $version"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Zip distribution folder
+        run: |
+          $version = "${{ steps.get_version.outputs.version }}"
+          Compress-Archive -Path "dist/obara-3d-parser" -DestinationPath "dist/obara-3d-parser_$version.zip" -Force
+          Write-Host "ZIP created: obara-3d-parser_$version.zip"
+
+      - name: Clean intermediate build artifacts
+        run: |
+          if (Test-Path "build") {
+              Remove-Item -Recurse -Force "build"
+              Write-Host "Removed build directory"
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: obara-3d-parser
+          path: dist/obara-3d-parser_${{ steps.get_version.outputs.version }}.zip
+          if-no-files-found: error
+
+      - name: Create tag if version changed
+        if: github.ref == 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
+        run: |
+          $version = "${{ steps.get_version.outputs.version }}"
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          if (git ls-remote --exit-code --tags origin $version) {
+              Write-Host "Tag $version already exists, skipping"
+          } else {
+              Write-Host "Creating tag $version"
+              git tag $version
+              git push origin $version
+              Write-Host "Tag pushed successfully"
+          }
+
+      - name: Create Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/obara-3d-parser_${{ steps.get_version.outputs.version }}.zip
+          name: Release ${{ steps.get_version.outputs.version }}
+          body: |
+            **obara-3d-parser** - ${{ steps.get_version.outputs.version }}
+            
+            A lightweight SolidWorks-style FEA simulation software.
+            
+            **Features:**
+            - STEP file import with automatic tetrahedral meshing
+            - Material database with 100+ materials
+            - Linear static analysis
+            - Displacement and von Mises stress visualization
+            - Safety factor calculation
+            
+            **Download:**
+            - [obara-3d-parser_${{ steps.get_version.outputs.version }}.zip](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/obara-3d-parser_${{ steps.get_version.outputs.version }}.zip)

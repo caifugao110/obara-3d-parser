@@ -1,0 +1,29 @@
+[project]
+name = "obara-3d-parser"
+version = "v26-07-12-α"
+description = "A lightweight, open-source 3D finite element analysis (FEA) simulation software inspired by SolidWorks Simulation."
+authors = [
+    { name = "Tobin" }
+]
+license = "MIT"
+requires-python = ">=3.13"
+readme = "README.md"
+dependencies = [
+    "PySide6>=6.6",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "scikit-fem>=9.0",
+    "gmsh>=4.12",
+    "pyvista>=0.43",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.5"]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.ico"]

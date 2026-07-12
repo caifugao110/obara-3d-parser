@@ -33,6 +33,7 @@ jobs:
 
       - name: Verify gmsh installation
         run: |
+          $env:PYTHONIOENCODING = 'utf-8'
           python -c "import gmsh; print('gmsh version:', gmsh.__version__)"
 
       - name: Cache PyInstaller build
@@ -58,6 +59,7 @@ jobs:
       - name: Get version from pyproject.toml
         id: get_version
         run: |
+          $env:PYTHONIOENCODING = 'utf-8'
           $version = (python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
           Write-Host "Version: $version"
           echo "version=$version" >> $env:GITHUB_OUTPUT

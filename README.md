@@ -1,30 +1,50 @@
+# [obara-3d-parser](https://github.com/caifugao110/obara-3d-parser)
+
 # obara-3d-parser
 
-一款轻量级、开源的3D有限元分析（FEA）仿真软件，灵感来源于SolidWorks Simulation。
+![](assets/app_icon.ico)
 
-**作者**: Tobin  
-**协议**: MIT  
-**版本**: v26-07-12-α
+*A lightweight, open-source 3D Finite Element Analysis (FEA) simulation software, inspired by SolidWorks Simulation.*
 
-![obara-3d-parser](assets/app_icon.ico)
+## 简介
+
+**obara-3d-parser** 是一款轻量级、开源的3D有限元分析（FEA）仿真软件，灵感来源于SolidWorks Simulation。
+
+| 项目信息 | |
+|---|---|
+| 作者 | **Tobin** |
+| 项目地址 | [github.com/caifugao110/obara-3d-parser](https://github.com/caifugao110/obara-3d-parser) |
+| 开源协议 | MIT |
+| 版本 | v26-07-15-α |
 
 ## 功能特性
 
+### 文件导入
+
 - **STEP 文件导入**: 支持导入 STEP 格式的3D CAD数模
+
+### 网格划分
+
 - **自动网格划分**: 使用 Gmsh 生成四面体网格
+
+### 材质与分析
+
 - **材质数据库**: 包含100+种材质，包括铝、钢、铜、橡胶、尼龙等
 - **线性静态分析**: 求解位移和应力
-- **可视化**: 3D渲染位移和应力ISO等高线图
 - **安全系数**: 基于屈服强度的安全系数计算
+
+### 可视化与输出
+
+- **可视化**: 3D渲染位移和应力ISO等高线图
 - **用户坐标系**: 在用户定义的坐标系下输出位移结果
 
-## 安装
+## 快速开始
 
-### Windows
+### 环境要求
 
-从 [releases](https://github.com/caifugao110/obara-3d-parser/releases) 下载最新版本。
+- Python >= 3.13
 
-### 从源代码安装
+### 直接运行源码
 
 ```bash
 # 克隆仓库
@@ -37,6 +57,10 @@ pip install -r requirements.txt
 # 运行应用
 python run.py
 ```
+
+### Windows
+
+从 [releases](https://github.com/caifugao110/obara-3d-parser/releases) 下载最新版本。
 
 ## 使用方法
 
@@ -74,7 +98,7 @@ python run.py
 - 内部：SI单位（米、帕斯卡、牛顿）
 - 输入/输出：毫米、MPa（标准工程单位）
 
-## 从源代码构建
+## 构建
 
 ### Windows
 
@@ -121,12 +145,32 @@ obara-3d-parser/
 │   └── build.yml           # GitHub Actions工作流
 ├── .gitignore
 ├── build.ps1               # PowerShell构建脚本
-├── obara-3d-parser.spec  # PyInstaller配置文件
+├── obara-3d-parser.spec    # PyInstaller配置文件
 ├── requirements.txt        # Python依赖
 ├── pyproject.toml          # 项目配置
 ├── LICENSE                 # MIT协议
 └── README.md               # 本文档
 ```
+
+| 条目 | 说明 |
+|---|---|
+| `app/` | 主应用代码目录 |
+| `app/__init__.py` | 包初始化（含版本信息） |
+| `app/fea.py` | FEA求解器（线弹性） |
+| `app/geometry.py` | STEP导入和网格处理 |
+| `app/material_db.py` | 材质数据库加载器 |
+| `app/main.py` | 应用入口 |
+| `app/main_window.py` | 主窗口UI |
+| `app/viewport.py` | 3D视图（PyVista） |
+| `assets/` | 应用资源 |
+| `material_data/` | 材质数据库 |
+| `hooks/` | PyInstaller运行时钩子 |
+| `tests/` | 测试脚本 |
+| `.github/workflows/` | GitHub Actions工作流配置 |
+| `build.ps1` | PowerShell构建脚本 |
+| `obara-3d-parser.spec` | PyInstaller配置文件 |
+| `requirements.txt` | Python依赖清单 |
+| `pyproject.toml` | 项目配置 |
 
 ## 协议
 

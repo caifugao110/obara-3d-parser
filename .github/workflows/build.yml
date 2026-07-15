@@ -85,6 +85,7 @@ jobs:
           if-no-files-found: error
 
       - name: Create tag if version changed
+        id: create_tag
         if: github.ref == 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
         run: |
           $version = "${{ steps.get_version.outputs.version }}"
@@ -92,14 +93,39 @@ jobs:
           git config user.email "actions@github.com"
           if (git ls-remote --exit-code --tags origin $version) {
               Write-Host "Tag $version already exists, skipping"
+              echo "created=false" >> $env:GITHUB_OUTPUT
           } else {
               Write-Host "Creating tag $version"
               git tag $version
               git push origin $version
               Write-Host "Tag pushed successfully"
+              echo "created=true" >> $env:GITHUB_OUTPUT
+              echo "tag=$version" >> $env:GITHUB_OUTPUT
           }
 
-      - name: Create Release (on tag)
+      - name: Create Release (on push to main)
+        if: github.ref == 'refs/heads/main' && steps.create_tag.outputs.created == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.create_tag.outputs.tag }}
+          files: dist/obara-3d-parser_${{ steps.get_version.outputs.version }}.zip
+          name: Release ${{ steps.get_version.outputs.version }}
+          body: |
+            **obara-3d-parser** - ${{ steps.get_version.outputs.version }}
+            
+            A lightweight SolidWorks-style FEA simulation software.
+            
+            **Features:**
+            - STEP file import with automatic tetrahedral meshing
+            - Material database with 100+ materials
+            - Linear static analysis
+            - Displacement and von Mises stress visualization
+            - Safety factor calculation
+            
+            **Download:**
+            - [obara-3d-parser_${{ steps.get_version.outputs.version }}.zip](https://github.com/${{ github.repository }}/releases/download/${{ steps.create_tag.outputs.tag }}/obara-3d-parser_${{ steps.get_version.outputs.version }}.zip)
+
+      - name: Create Release (on tag push)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:

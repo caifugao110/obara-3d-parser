@@ -51,6 +51,8 @@ if (-not (Test-Path $iconFile)) {
 
 Write-Host "`n[2/6] Cleaning previous build artifacts..." -ForegroundColor Yellow
 
+$venvDir = Join-Path $projectRoot ".venv"
+
 if (Test-Path $distDir) {
     Remove-Item -Recurse -Force $distDir
     Write-Host "  Removed dist directory"
@@ -59,6 +61,10 @@ if (Test-Path $distDir) {
 if (Test-Path $buildDir) {
     Remove-Item -Recurse -Force $buildDir
     Write-Host "  Removed build directory"
+}
+
+if (Test-Path $venvDir) {
+    Write-Host "  Skipping .venv directory (preserving virtual environment)" -ForegroundColor Green
 }
 
 Write-Host "`n[3/6] Running PyInstaller..." -ForegroundColor Yellow
@@ -123,6 +129,10 @@ Write-Host "`n[5/6] Cleaning intermediate build artifacts..." -ForegroundColor Y
 if (Test-Path $buildDir) {
     Remove-Item -Recurse -Force $buildDir
     Write-Host "  Removed intermediate build directory" -ForegroundColor Green
+}
+
+if (Test-Path $venvDir) {
+    Write-Host "  Skipping .venv directory (preserving virtual environment)" -ForegroundColor Green
 }
 
 Write-Host "`n[6/6] Build complete!" -ForegroundColor Green

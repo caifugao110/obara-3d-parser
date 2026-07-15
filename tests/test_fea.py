@@ -7,7 +7,7 @@ Analytical tip deflection (uniform load w = p*W):
 import sys
 import numpy as np
 
-from app.geometry import make_test_beam
+from app.geometry import make_test_beam, mesh_part
 from app.material_db import Material
 from app.fea import solve_static, Fixture, PressureLoad, CoordSystem
 
@@ -22,13 +22,15 @@ def find_face(part, target, tol=0.5):
 
 def main():
     L, W, H = 100.0, 20.0, 10.0
-    part = make_test_beam(length=L, width=W, height=H, mesh_size=6.0)
+    part = make_test_beam(length=L, width=W, height=H)
+    part.mesh = mesh_part([part], 6.0)
     print(f"Mesh: nodes={part.mesh.num_nodes}, tets={part.mesh.num_tets}, "
           f"faces={part.mesh.num_faces}")
 
     # steel-like
     mat = Material(name="TestSteel", classification="铁材",
                    ex=200e9, nuxy=0.3, dens=7850.0, sigyld=250e6)
+    part.material = mat
 
     fix_face = find_face(part, [0.0, 0.0, 0.0])
     top_face = find_face(part, [L/2, 0.0, H/2])
@@ -40,7 +42,7 @@ def main():
     loads = [PressureLoad(face_id=top_face, pressure=pressure)]
     cs = CoordSystem()
 
-    result = solve_static(part, mat, fixtures, loads, cs,
+    result = solve_static([part], fixtures, loads, cs,
                           progress=lambda s: print("  ", s))
 
     # analytical (all SI: m, Pa, N). Beam theory, uniform pressure on top.

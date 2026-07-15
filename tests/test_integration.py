@@ -6,7 +6,7 @@ results formatting without rendering Qt windows.
 import numpy as np
 import pyvista as pv
 
-from app.geometry import make_test_beam
+from app.geometry import make_test_beam, mesh_part
 from app.material_db import load_material_database, find_material
 from app.study import Study
 from app.fea import solve_static, Fixture, PressureLoad, ForceLoad, CoordSystem
@@ -26,7 +26,8 @@ def main():
           f"SIGYLD={steel.sigyld/1e6:.1f} MPa")
 
     # build part + viewport polydata (same path the viewport uses)
-    part = make_test_beam(100.0, 20.0, 10.0, 5.0)
+    part = make_test_beam(100.0, 20.0, 10.0)
+    part.mesh = mesh_part([part], 5.0)
     surf = _surface_polydata(part)
     sub = _face_submesh(part, 0)
     print(f"Surface polydata: {surf.n_points} pts, {surf.n_cells} tris; "
@@ -34,7 +35,8 @@ def main():
     assert surf.n_cells == len(part.mesh.surf_tris)
 
     # build study (same path the GUI's MainWindow uses)
-    study = Study(name="integration", part=part, material=steel)
+    part.material = steel
+    study = Study(name="integration", parts=[part])
     # fix face at x=0
     fix_face = next(i for i in range(part.mesh.num_faces)
                     if abs(part.mesh.face_centers[i][0]) < 0.5)
@@ -56,7 +58,7 @@ def main():
     )
 
     result = solve_static(
-        study.part, study.material, study.fixtures, study.loads,
+        study.parts, study.fixtures, study.loads,
         study.coord_system, progress=lambda m: None,
     )
     study.result = result

@@ -1,21 +1,29 @@
-# [obara-3d-parser](https://github.com/caifugao110/obara-3d-parser)
+<p align="center">
+  <h1 align="center">obara-3d-parser</h1>
+  <p align="center">
+    <img src="https://img.shields.io/badge/python-%3E%3D3.13-green" alt="python">
+    <img src="https://img.shields.io/badge/license-MIT-yellow" alt="license">
+    <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="platform">
+  </p>
+  <p align="center">
+    <i>A lightweight, open-source 3D Finite Element Analysis (FEA) simulation software, inspired by SolidWorks Simulation.</i>
+  </p>
+</p>
 
-# obara-3d-parser
-
-![](assets/app_icon.ico)
-
-*A lightweight, open-source 3D Finite Element Analysis (FEA) simulation software, inspired by SolidWorks Simulation.*
+---
 
 ## 简介
 
 **obara-3d-parser** 是一款轻量级、开源的3D有限元分析（FEA）仿真软件，灵感来源于SolidWorks Simulation。
 
-| 项目信息 | |
-|---|---|
-| 作者 | **Tobin** |
+| 项目信息 |                                                              |
+| -------- | ------------------------------------------------------------ |
+| 作者     | **Tobin**                                                    |
 | 项目地址 | [github.com/caifugao110/obara-3d-parser](https://github.com/caifugao110/obara-3d-parser) |
-| 开源协议 | MIT |
-| 版本 | v26-07-15-α |
+| 开源协议 | MIT                                                          |
+| 版本     | vYY-MM-DD-α（自动使用当前日期）                               |
+
+---
 
 ## 功能特性
 
@@ -38,11 +46,14 @@
 - **可视化**: 3D渲染位移和应力ISO等高线图
 - **用户坐标系**: 在用户定义的坐标系下输出位移结果
 
+---
+
 ## 快速开始
 
 ### 环境要求
 
 - Python >= 3.13
+- Windows 操作系统
 
 ### 直接运行源码
 
@@ -62,6 +73,8 @@ python run.py
 
 从 [releases](https://github.com/caifugao110/obara-3d-parser/releases) 下载最新版本。
 
+---
+
 ## 使用方法
 
 1. **导入数模**: 点击"文件 > 导入 STEP"加载CAD模型，或使用"生成测试梁"快速演示
@@ -71,6 +84,8 @@ python run.py
 5. **定义坐标系**: 设置分析坐标系
 6. **运行分析**: 点击"运行仿真"执行FEA求解器
 7. **查看结果**: 查看位移值和应力等高线
+
+---
 
 ## 技术细节
 
@@ -98,6 +113,8 @@ python run.py
 - 内部：SI单位（米、帕斯卡、牛顿）
 - 输入/输出：毫米、MPa（标准工程单位）
 
+---
+
 ## 构建
 
 ### Windows
@@ -116,6 +133,8 @@ pyinstaller --noconfirm --distpath dist --workpath build obara-3d-parser.spec
 ### GitHub Actions
 
 项目包含GitHub Actions工作流，在每次标签推送时自动构建并发布Windows可执行文件。
+
+---
 
 ## 项目结构
 
@@ -152,33 +171,33 @@ obara-3d-parser/
 └── README.md               # 本文档
 ```
 
-| 条目 | 说明 |
-|---|---|
-| `app/` | 主应用代码目录 |
-| `app/__init__.py` | 包初始化（含版本信息） |
-| `app/fea.py` | FEA求解器（线弹性） |
-| `app/geometry.py` | STEP导入和网格处理 |
-| `app/material_db.py` | 材质数据库加载器 |
-| `app/main.py` | 应用入口 |
-| `app/main_window.py` | 主窗口UI |
-| `app/viewport.py` | 3D视图（PyVista） |
-| `assets/` | 应用资源 |
-| `material_data/` | 材质数据库 |
-| `hooks/` | PyInstaller运行时钩子 |
-| `tests/` | 测试脚本 |
-| `.github/workflows/` | GitHub Actions工作流配置 |
-| `build.ps1` | PowerShell构建脚本 |
-| `obara-3d-parser.spec` | PyInstaller配置文件 |
-| `requirements.txt` | Python依赖清单 |
-| `pyproject.toml` | 项目配置 |
+| 条目               | 说明                         |
+| ------------------ | ---------------------------- |
+| `app/`             | 主应用代码目录               |
+| `app/__init__.py`  | 包初始化（含版本信息）       |
+| `app/fea.py`       | FEA求解器（线弹性）          |
+| `app/geometry.py`  | STEP导入和网格处理           |
+| `app/material_db.py` | 材质数据库加载器           |
+| `app/main.py`      | 应用入口                     |
+| `app/main_window.py` | 主窗口UI                   |
+| `app/viewport.py`  | 3D视图（PyVista）            |
+| `assets/`          | 应用资源                     |
+| `material_data/`   | 材质数据库                   |
+| `hooks/`           | PyInstaller运行时钩子        |
+| `tests/`           | 测试脚本                     |
+| `.github/workflows/` | GitHub Actions工作流配置   |
+| `build.ps1`        | PowerShell构建脚本           |
+| `obara-3d-parser.spec` | PyInstaller配置文件       |
+| `requirements.txt` | Python依赖清单               |
+| `pyproject.toml`   | 项目配置                     |
 
-## 协议
-
-本项目采用 MIT 协议 - 详见 [LICENSE](LICENSE)。
+---
 
 ## 贡献
 
 欢迎贡献！请随时提交issues和pull requests。
+
+---
 
 ## 致谢
 
@@ -186,3 +205,9 @@ obara-3d-parser/
 - [PyVista](https://docs.pyvista.org/) - 3D绘图和网格分析
 - [SciPy](https://scipy.org/) - 科学计算
 - [PySide6](https://doc.qt.io/qtforpython/) - Qt6 Python绑定
+
+---
+
+## License
+
+MIT © Tobin

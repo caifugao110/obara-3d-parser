@@ -40,16 +40,31 @@ class Fixture:
     face_id: int
 
 
-@dataclass
+@dataclass(init=False)
 class PressureLoad:
-    """Force normal to a surface face (N).
+    """Total normal force distributed over a surface face (N).
 
-    Positive values push *into* the surface (against the outward normal),
-    matching SolidWorks' pressure convention.
+    ``pressure`` is accepted as a backward-compatible alias for older tests and
+    saved studies, but the value is interpreted as total force in new UI flows.
+    Positive values push into the surface, matching SolidWorks' pressure arrow
+    convention for normal loads.
     """
     face_id: int
-    force: float               # N
+    force: float
     name: str = ""
+
+    def __init__(
+        self,
+        face_id: int,
+        force: Optional[float] = None,
+        name: str = "",
+        pressure: Optional[float] = None,
+    ) -> None:
+        if force is None and pressure is None:
+            raise TypeError("PressureLoad requires force=... in N")
+        self.face_id = face_id
+        self.force = float(force if force is not None else pressure)
+        self.name = name
 
 
 @dataclass

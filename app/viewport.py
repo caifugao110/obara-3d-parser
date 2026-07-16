@@ -13,11 +13,21 @@ from __future__ import annotations
 
 import numpy as np
 import pyvista as pv
-from pyvistaqt import QtInteractor
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QApplication
 from typing import List, Optional
 import vtk
+
+try:
+    from pyvistaqt import QtInteractor
+    from PySide6.QtCore import Signal
+    from PySide6.QtWidgets import QApplication
+except Exception:  # noqa: BLE001 - allow headless helpers without Qt bindings
+    QtInteractor = object
+
+    class Signal:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs):
+            pass
+
+    QApplication = None  # type: ignore[assignment]
 
 from .geometry import Part
 from .fea import FEAResult
@@ -541,7 +551,7 @@ class Viewport(QtInteractor):
         return pts
 
     def show_displacement(self, result: FEAResult, deformed: bool = False,
-                          scale: float = 1.0) -> None:
+                          scale: float = 1.0, component: str = "magnitude") -> None:
         if self._part is None or self._part.mesh is None:
             return
         self._result = result
@@ -553,7 +563,25 @@ class Viewport(QtInteractor):
             np.hstack([np.full((len(self._part.mesh.surf_tris), 1), 3),
                        self._part.mesh.surf_tris]).ravel(),
         )
-        surf["位移 (mm)"] = result.disp_magnitude * 1000.0
+
+        component_key = component.lower()
+        if component_key in {"x", "ux"}:
+            scalar_name = "UX displacement (mm)"
+            scalar_values = result.displacements[:, 0] * 1000.0
+            title = "UX displacement ISO"
+        elif component_key in {"y", "uy"}:
+            scalar_name = "UY displacement (mm)"
+            scalar_values = result.displacements[:, 1] * 1000.0
+            title = "UY displacement ISO"
+        elif component_key in {"z", "uz"}:
+            scalar_name = "UZ displacement (mm)"
+            scalar_values = result.displacements[:, 2] * 1000.0
+            title = "UZ displacement ISO"
+        else:
+            scalar_name = "Resultant displacement (mm)"
+            scalar_values = result.disp_magnitude * 1000.0
+            title = "Resultant displacement ISO"
+        surf[scalar_name] = scalar_values
         for a in self._fixture_actors + self._load_actors:
             try:
                 self.remove_actor(a)
@@ -566,10 +594,10 @@ class Viewport(QtInteractor):
         except Exception:
             pass
         self._main_actor = self.add_mesh(
-            surf, scalars="位移 (mm)", cmap="jet", show_edges=False,
-            opacity=1.0, pickable=False, scalar_bar_args={"title": "位移 (mm)"},
+            surf, scalars=scalar_name, cmap="jet", show_edges=False,
+            opacity=1.0, pickable=False, scalar_bar_args={"title": scalar_name},
         )
-        self.add_text("位移 ISO 图", font_size=10)
+        self.add_text(title, font_size=10)
 
     def show_stress(self, result: FEAResult, deformed: bool = False,
                           scale: float = 1.0) -> None:
@@ -605,3 +633,4 @@ class Viewport(QtInteractor):
     def reset_camera(self) -> None:
         if self._part is not None:
             self.view_isometric()
+

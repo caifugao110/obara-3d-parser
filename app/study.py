@@ -24,6 +24,7 @@ class Study:
     coord_system: CoordSystem = field(default_factory=CoordSystem)
     result: Optional[FEAResult] = None
     mesh_size: float = 5.0
+    solver_backend: str = "internal"
 
     @property
     def part(self) -> Optional[Part]:

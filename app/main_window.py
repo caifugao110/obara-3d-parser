@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (
 
 from .material_db import load_material_database, load_material_database_from_dir, Material
 from .geometry import load_step, mesh_part, Part
-from .fea import solve_static, CoordSystem, Fixture, PressureLoad, ForceLoad, FEAResult
+from .fea import CoordSystem, Fixture, PressureLoad, ForceLoad, FEAResult
+from .solver_backends import solve_study
 from .study import Study
 from .viewport import Viewport
 from .panels import MaterialPanel, StudySetupPanel, ResultsPanel
@@ -49,7 +50,8 @@ class _SolveWorker(QObject):
             self.log_message.emit(f"零件数: {len(self.study.parts)}")
             self.log_message.emit(f"网格尺寸: {self.study.mesh_size:.2f} mm")
             
-            result = solve_static(
+            result = solve_study(
+                self.study.solver_backend,
                 self.study.parts,
                 self.study.fixtures,
                 self.study.loads,
@@ -73,7 +75,7 @@ class _SolveWorker(QObject):
 
 
 # --------------------------------------------------------------------------- #
-# Small dialog for entering pressure value
+# Small dialog for entering external force value
 # --------------------------------------------------------------------------- #
 class _LoadDialog(QDialog):
     def __init__(self, parent=None):
@@ -205,6 +207,7 @@ class MainWindow(QMainWindow):
         self.setup_panel.mesh_size_changed.connect(lambda _: self._update_ready_state())
         self.setup_panel.mesh_clicked.connect(self._do_mesh)
         self.setup_panel.part_material_clicked.connect(self._on_part_material_clicked)
+        self.setup_panel.solver_backend_changed.connect(self._on_solver_backend_changed)
         self.setup_panel.btn_add_fix.clicked.connect(self._begin_pick_fixture)
         self.setup_panel.btn_add_load.clicked.connect(self._begin_pick_load)
         self.addDockWidget(Qt.RightDockWidgetArea, self.setup_panel)
@@ -232,14 +235,25 @@ class MainWindow(QMainWindow):
         self.a_mesh.setEnabled(False)
         tb.addAction(self.a_mesh)
 
-        a_disp = QAction("位移 ISO", self)
+        a_disp = QAction("合成位移", self)
         a_disp.triggered.connect(lambda: self._set_display_mode("disp"))
         tb.addAction(a_disp)
+
+        a_disp_x = QAction("X位移", self)
+        a_disp_x.triggered.connect(lambda: self._set_display_mode("disp_x"))
+        tb.addAction(a_disp_x)
+
+        a_disp_y = QAction("Y位移", self)
+        a_disp_y.triggered.connect(lambda: self._set_display_mode("disp_y"))
+        tb.addAction(a_disp_y)
+
+        a_disp_z = QAction("Z位移", self)
+        a_disp_z.triggered.connect(lambda: self._set_display_mode("disp_z"))
+        tb.addAction(a_disp_z)
 
         a_stress = QAction("应力 ISO", self)
         a_stress.triggered.connect(lambda: self._set_display_mode("stress"))
         tb.addAction(a_stress)
-
         a_probe = QAction("探测模式", self)
         a_probe.triggered.connect(self._toggle_probe_mode)
         tb.addAction(a_probe)
@@ -300,7 +314,10 @@ class MainWindow(QMainWindow):
         m_view = mb.addMenu("视图")
         m_view.addAction("原始视图", lambda: self._set_display_mode("smooth"))
         m_view.addAction("网格视图", lambda: self._set_display_mode("mesh"))
-        m_view.addAction("位移 ISO 图", lambda: self._set_display_mode("disp"))
+        m_view.addAction("合成位移 ISO 图", lambda: self._set_display_mode("disp"))
+        m_view.addAction("X 方向位移 ISO 图", lambda: self._set_display_mode("disp_x"))
+        m_view.addAction("Y 方向位移 ISO 图", lambda: self._set_display_mode("disp_y"))
+        m_view.addAction("Z 方向位移 ISO 图", lambda: self._set_display_mode("disp_z"))
         m_view.addAction("应力 ISO 图", lambda: self._set_display_mode("stress"))
         m_view.addAction("探测模式", self._toggle_probe_mode)
         m_view.addAction("重置视图", self.viewport.reset_camera)
@@ -443,6 +460,10 @@ class MainWindow(QMainWindow):
         self.material_panel.setFocus()
         self.statusBar().showMessage(f"请在材质库中选择材质应用到零件: {self.study.parts[part_idx].name}")
 
+
+    def _on_solver_backend_changed(self, backend: str) -> None:
+        self.study.solver_backend = backend
+        self.statusBar().showMessage(f"?????????: {backend}")
     # ------------------------------------------------------------------ #
     # Workflow: picking fixtures / loads
     # ------------------------------------------------------------------ #
@@ -703,11 +724,19 @@ class MainWindow(QMainWindow):
         elif mode == "mesh":
             self.viewport.show_mesh_mode()
             self._refresh_highlights()
-        elif mode == "disp":
+        elif mode in {"disp", "disp_x", "disp_y", "disp_z"}:
             if self.study.result is None:
                 QMessageBox.information(self, "提示", "请先运行仿真。")
                 return
-            self.viewport.show_displacement(self.study.result, deformed=False)
+            component = {
+                "disp": "magnitude",
+                "disp_x": "x",
+                "disp_y": "y",
+                "disp_z": "z",
+            }[mode]
+            self.viewport.show_displacement(
+                self.study.result, deformed=False, component=component
+            )
         elif mode == "stress":
             if self.study.result is None:
                 QMessageBox.information(self, "提示", "请先运行仿真。")
@@ -836,3 +865,5 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("已取消拾取。")
         else:
             super().keyPressEvent(event)
+
+

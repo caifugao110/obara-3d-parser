@@ -148,6 +148,7 @@ class StudySetupPanel(QDockWidget):
     mesh_size_changed = Signal(float)
     mesh_clicked = Signal()
     part_material_clicked = Signal(int)
+    solver_backend_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__("分析设置", parent)
@@ -252,6 +253,16 @@ class StudySetupPanel(QDockWidget):
         self.mesh_slider.valueChanged.connect(self._on_mesh_slider_changed)
         self.btn_mesh.clicked.connect(self.mesh_clicked.emit)
 
+        gb_solver = QGroupBox("求解器后端")
+        fs = QFormLayout(gb_solver)
+        self.solver_combo = QComboBox()
+        self.solver_combo.addItem("内置线性静应力", "internal")
+        self.solver_combo.addItem("CalculiX 外部求解器", "calculix")
+        self.solver_combo.currentIndexChanged.connect(self._on_solver_changed)
+        fs.addRow("后端:", self.solver_combo)
+        fs.addRow(QLabel("不使用 SolidWorks COM 时，外部 FEA 后端是最接近的可部署方案。"))
+        v.addWidget(gb_solver)
+
         self.btn_run = QPushButton("▶  运行仿真")
         self.btn_run.setStyleSheet("padding:8px; font-weight:bold;")
         self.btn_run.clicked.connect(self.run_clicked.emit)
@@ -278,6 +289,9 @@ class StudySetupPanel(QDockWidget):
 
     def set_study(self, study: Study) -> None:
         self._study = study
+        idx = self.solver_combo.findData(study.solver_backend)
+        if idx >= 0:
+            self.solver_combo.setCurrentIndex(idx)
 
     # --- refresh from study ---
     def refresh_part(self) -> None:
@@ -313,6 +327,13 @@ class StudySetupPanel(QDockWidget):
         part_idx = item.data(Qt.UserRole)
         if part_idx is not None:
             self.part_material_clicked.emit(part_idx)
+
+    def _on_solver_changed(self, _idx: int) -> None:
+        if self._study is None:
+            return
+        backend = self.solver_combo.currentData() or "internal"
+        self._study.solver_backend = backend
+        self.solver_backend_changed.emit(backend)
 
     def refresh_fixtures(self) -> None:
         self.fix_list.clear()

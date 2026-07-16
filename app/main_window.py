@@ -165,6 +165,10 @@ class MainWindow(QMainWindow):
         self._solve_worker: Optional[_SolveWorker] = None
         self._display_mode = "smooth"     # "smooth" | "mesh" | "disp" | "stress"
         self._current_part_idx = 0
+        self._edit_fixture_idx = -1
+        self._edit_load_idx = -1
+        self._face_color = (0.8, 0.2, 0.2)
+        self._part_color = (0.2, 0.2, 0.8)
 
         self._build_ui()
         self._refresh_all()
@@ -210,6 +214,16 @@ class MainWindow(QMainWindow):
         self.setup_panel.solver_backend_changed.connect(self._on_solver_backend_changed)
         self.setup_panel.btn_add_fix.clicked.connect(self._begin_pick_fixture)
         self.setup_panel.btn_add_load.clicked.connect(self._begin_pick_load)
+        self.setup_panel.probe_displacement_clicked.connect(self._begin_probe_disp)
+        self.setup_panel.probe_stress_clicked.connect(self._begin_probe_stress)
+        self.setup_panel.edit_fixture_requested.connect(self._on_edit_fixture)
+        self.setup_panel.edit_load_requested.connect(self._on_edit_load)
+        self.setup_panel.face_color_pick_clicked.connect(self._choose_face_color)
+        self.setup_panel.part_color_pick_clicked.connect(self._choose_part_color)
+        self.setup_panel.face_color_apply_clicked.connect(self._begin_pick_color)
+        self.setup_panel.face_color_clear_clicked.connect(self._clear_face_colors)
+        self.setup_panel.part_color_apply_clicked.connect(self._begin_pick_part_color)
+        self.setup_panel.part_color_clear_clicked.connect(self._clear_part_colors)
         self.addDockWidget(Qt.RightDockWidgetArea, self.setup_panel)
 
         self._build_toolbar()
@@ -277,29 +291,6 @@ class MainWindow(QMainWindow):
         tb.addAction(a_run)
 
         tb.addSeparator()
-
-        from PySide6.QtWidgets import QPushButton, QColorDialog
-        from PySide6.QtGui import QColor
-
-        self._current_color = (0.8, 0.2, 0.2)
-
-        self.btn_color = QPushButton("颜色")
-        self.btn_color.setStyleSheet("background-color: rgb(204, 51, 51);")
-        self.btn_color.clicked.connect(self._choose_color)
-        tb.addWidget(self.btn_color)
-
-        self.btn_face_color = QPushButton("面上色")
-        self.btn_face_color.clicked.connect(self._begin_pick_color)
-        tb.addWidget(self.btn_face_color)
-
-        self.btn_part_color = QPushButton("零件上色")
-        self.btn_part_color.clicked.connect(self._begin_pick_part_color)
-        tb.addWidget(self.btn_part_color)
-
-        self.btn_clear_color = QPushButton("取消上色")
-        self.btn_clear_color.clicked.connect(self._clear_all_colors)
-        tb.addWidget(self.btn_clear_color)
-
         self.btn_select_part = QPushButton("选择零件")
         self.btn_select_part.clicked.connect(self._begin_pick_part)
         tb.addWidget(self.btn_select_part)
@@ -419,7 +410,6 @@ class MainWindow(QMainWindow):
             combined_mesh.tri_to_part = tri_to_part
             parts[0].mesh = combined_mesh
         
-        self.viewport.set_part(parts[0], show_edges=False, smooth_shading=True)
         self.viewport.show_coord_system(
             self.study.coord_system.origin,
             self.study.coord_system.x_axis,
@@ -514,24 +504,33 @@ class MainWindow(QMainWindow):
             self._pick_mode = "none"
             self._refresh_all()
         elif self._pick_mode == "color":
-            self.viewport.apply_face_color(face_id, self._current_color)
+            self.viewport.apply_face_color(face_id, self._face_color)
             self.viewport.set_picking_active(False)
             self._pick_mode = "none"
             self.statusBar().showMessage(f"已为面 #{face_id} 上色。")
 
-    def _choose_color(self) -> None:
-        from PySide6.QtWidgets import QColorDialog
-        from PySide6.QtGui import QColor
-        color = QColorDialog.getColor(parent=self)
-        if color.isValid():
-            self._current_color = (
-                color.redF(),
-                color.greenF(),
-                color.blueF(),
-            )
-            self.btn_color.setStyleSheet(
-                f"background-color: rgb({color.red()}, {color.green()}, {color.blue()});"
-            )
+        elif self._pick_mode == "edit_fixture":
+            idx = self._edit_fixture_idx
+            if 0 <= idx < len(self.study.fixtures):
+                self.study.fixtures[idx] = Fixture(face_id=face_id)
+            self.viewport.set_picking_active(False)
+            self._pick_mode = "none"
+            self._edit_fixture_idx = -1
+            self._refresh_all()
+            self.statusBar().showMessage("Gu ding wei zhi yi geng xin")
+        elif self._pick_mode == "edit_load":
+            idx = self._edit_load_idx
+            if 0 <= idx < len(self.study.loads):
+                old_ld = self.study.loads[idx]
+                if isinstance(old_ld, PressureLoad):
+                    self.study.loads[idx] = PressureLoad(face_id=face_id, force=old_ld.force, name=old_ld.name)
+                else:
+                    self.study.loads[idx] = ForceLoad(face_id=face_id, force=old_ld.force, direction=old_ld.direction, name=old_ld.name)
+            self.viewport.set_picking_active(False)
+            self._pick_mode = "none"
+            self._edit_load_idx = -1
+            self._refresh_all()
+            self.statusBar().showMessage("Zai he yi geng xin")
 
     def _begin_pick_color(self) -> None:
         if self.study.part is None:
@@ -541,7 +540,7 @@ class MainWindow(QMainWindow):
         self.viewport.set_picking_active(True)
         self.viewport.set_probe_mode(False)
         self.viewport.set_part_picking_mode(False)
-        r, g, b = self._current_color
+        r, g, b = self._face_color
         self.statusBar().showMessage(f"请在 3D 视图中点击一个面进行上色 (颜色: R={int(r*255)} G={int(g*255)} B={int(b*255)}) …")
     
     def _clear_all_colors(self) -> None:
@@ -553,15 +552,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请先导入数模。")
             return
         if len(self.study.parts) <= 1:
-            self.viewport.apply_part_color(0, self._current_color)
-            r, g, b = self._current_color
+            self.viewport.apply_part_color(0, self._part_color)
+            r, g, b = self._face_color
             self.statusBar().showMessage(f"已为零件上色 (颜色: R={int(r*255)} G={int(g*255)} B={int(b*255)})。")
             return
         self._pick_mode = "part_color"
         self.viewport.set_part_picking_mode(True)
         self.viewport.set_picking_active(False)
         self.viewport.set_probe_mode(False)
-        r, g, b = self._current_color
+        r, g, b = self._face_color
         self.statusBar().showMessage(f"请在 3D 视图中点击零件进行上色 (颜色: R={int(r*255)} G={int(g*255)} B={int(b*255)}) …")
     
     def _begin_pick_part(self) -> None:
@@ -580,7 +579,7 @@ class MainWindow(QMainWindow):
             self.viewport.set_part_picking_mode(False)
             self._pick_mode = "none"
         elif self._pick_mode == "part_color":
-            self.viewport.apply_part_color(part_idx, self._current_color)
+            self.viewport.apply_part_color(part_idx, self._part_color)
             self.viewport.set_part_picking_mode(False)
             self._pick_mode = "none"
             self.statusBar().showMessage(f"已为零件 {part_idx+1} 上色。")
@@ -611,6 +610,75 @@ class MainWindow(QMainWindow):
             f"UX={data['ux']:.4f} UY={data['uy']:.4f} UZ={data['uz']:.4f} "
             f"| 应力={data['von_mises']:.2f} MPa"
         )
+
+
+    # ------------------------------------------------------------------ #
+    # Probe modes
+    # ------------------------------------------------------------------ #
+    def _begin_probe_disp(self) -> None:
+        if self.study.result is None:
+            QMessageBox.information(self, "\xe6\x8f\x90\xe7\xa4\xba", "\xe8\xaf\xb7\xe5\x85\x88\xe8\xbf\x90\xe8\xa1\x8c\xe4\xbb\xbf\xe7\x9c\x9f\xe3\x80\x82")
+            return
+        self._pick_mode = "probe"
+        self.viewport.set_displacement_probe_mode(True)
+        self.viewport.set_picking_active(False)
+        self.statusBar().showMessage("\xe4\xbd\x8d\xe7\xa7\xbb\xe6\x8e\xa2\xe6\xb5\x8b\xe6\xa8\xa1\xe5\xbc\x8f: \xe7\x82\xb9\xe5\x87\xbb3D\xe8\xa7\x86\xe5\x9b\xbe\xe6\x9f\xa5\xe7\x9c\x8b\xe4\xbd\x8d\xe7\xa7\xbb\xe5\x80\xbc")
+
+    def _begin_probe_stress(self) -> None:
+        if self.study.result is None:
+            QMessageBox.information(self, "\xe6\x8f\x90\xe7\xa4\xba", "\xe8\xaf\xb7\xe5\x85\x88\xe8\xbf\x90\xe8\xa1\x8c\xe4\xbb\xbf\xe7\x9c\x9f\xe3\x80\x82")
+            return
+        self._pick_mode = "probe"
+        self.viewport.set_stress_probe_mode(True)
+        self.viewport.set_picking_active(False)
+        self.statusBar().showMessage("\xe5\xba\x94\xe5\x8a\x9b\xe6\x8e\xa2\xe6\xb5\x8b\xe6\xa8\xa1\xe5\xbc\x8f: \xe7\x82\xb9\xe5\x87\xbb3D\xe8\xa7\x86\xe5\x9b\xbe\xe6\x9f\xa5\xe7\x9c\x8b\xe5\xba\x94\xe5\x8a\x9b\xe5\x80\xbc")
+
+    # ------------------------------------------------------------------ #
+    # Edit fixtures / loads via viewport re-picking
+    # ------------------------------------------------------------------ #
+    def _on_edit_fixture(self, idx: int) -> None:
+        if self.study.part is None:
+            return
+        self._pick_mode = "edit_fixture"
+        self._edit_fixture_idx = idx
+        self.viewport.set_picking_active(True)
+        self.statusBar().showMessage(f"\xe7\xbc\x96\xe8\xbe\x91\xe5\x9b\xba\xe5\xae\x9a\xe4\xbd\x8d\xe7\xbd\xae #{idx+1}: \xe5\x9c\xa83D\xe8\xa7\x86\xe5\x9b\xbe\xe4\xb8\xad\xe7\x82\xb9\xe5\x87\xbb\xe6\x96\xb0\xe9\x9d\xa2")
+
+    def _on_edit_load(self, idx: int) -> None:
+        if self.study.part is None:
+            return
+        self._pick_mode = "edit_load"
+        self._edit_load_idx = idx
+        self.viewport.set_picking_active(True)
+        self.statusBar().showMessage(f"\xe7\xbc\x96\xe8\xbe\x91\xe8\xbd\xbd\xe8\x8d\xb7 #{idx+1}: \xe5\x9c\xa83D\xe8\xa7\x86\xe5\x9b\xbe\xe4\xb8\xad\xe7\x82\xb9\xe5\x87\xbb\xe6\x96\xb0\xe9\x9d\xa2")
+
+    # ------------------------------------------------------------------ #
+    # Color helpers
+    # ------------------------------------------------------------------ #
+    def _choose_face_color(self) -> None:
+        from PySide6.QtWidgets import QColorDialog
+        from PySide6.QtGui import QColor
+        color = QColorDialog.getColor(parent=self)
+        if color.isValid():
+            self._face_color = (color.redF(), color.greenF(), color.blueF())
+            self.setup_panel.set_face_color_preview(self._face_color)
+
+    def _choose_part_color(self) -> None:
+        from PySide6.QtWidgets import QColorDialog
+        from PySide6.QtGui import QColor
+        color = QColorDialog.getColor(parent=self)
+        if color.isValid():
+            self._part_color = (color.redF(), color.greenF(), color.blueF())
+            self.setup_panel.set_part_color_preview(self._part_color)
+
+    def _clear_face_colors(self) -> None:
+        self.viewport.clear_face_colors()
+        self.statusBar().showMessage("\xe5\xb7\xb2\xe5\x8f\x96\xe6\xb6\x88\xe9\x9d\xa2\xe4\xb8\x8a\xe8\x89\xb2\xe3\x80\x82")
+
+    def _clear_part_colors(self) -> None:
+        self.viewport.clear_part_colors()
+        self.statusBar().showMessage("\xe5\xb7\xb2\xe5\x8f\x96\xe6\xb6\x88\xe9\x9b\xb6\xe4\xbb\xb6\xe4\xb8\x8a\xe8\x89\xb2\xe3\x80\x82")
+
 
     def _remove_fixture(self, idx: int) -> None:
         if 0 <= idx < len(self.study.fixtures):

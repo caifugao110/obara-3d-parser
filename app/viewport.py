@@ -57,8 +57,7 @@ def _face_submesh(part: Part, face_id: int) -> pv.PolyData:
     if len(tris) == 0:
         return pv.PolyData()
     faces = np.hstack([np.full((len(tris), 1), 3), tris]).ravel()
-    nodes = np.unique(tris.ravel())
-    return pv.PolyData(part.mesh.points[nodes], faces)
+    return pv.PolyData(part.mesh.points, faces)
 
 
 class Viewport(QtInteractor):
@@ -80,7 +79,7 @@ class Viewport(QtInteractor):
         self._selected_face_actor = None
         self._part_highlight_actor = None
         self._picking_active = False
-        self._probe_mode = False
+        self._probe_mode: Optional[str] = None
         self._part_picking_mode = False
         self._auto_part_select = False
         self._result: Optional[FEAResult] = None
@@ -126,6 +125,7 @@ class Viewport(QtInteractor):
         self._surf = None
         self._result = None
         self._face_colors.clear()
+        self._part_colors.clear()
         self._selected_face_id = None
 
     def apply_face_color(self, face_id: int, color: tuple) -> None:
@@ -175,9 +175,18 @@ class Viewport(QtInteractor):
     def set_picking_active(self, active: bool) -> None:
         self._picking_active = active
     
-    def set_probe_mode(self, active: bool) -> None:
-        self._probe_mode = active
-    
+    def set_probe_mode(self, active) -> None:
+       if isinstance(active, str):
+           self._probe_mode = active
+       else:
+           self._probe_mode = "all" if active else None
+
+    def set_displacement_probe_mode(self, active: bool) -> None:
+        self._probe_mode = "displacement" if active else None
+
+    def set_stress_probe_mode(self, active: bool) -> None:
+        self._probe_mode = "stress" if active else None
+
     def set_part_picking_mode(self, active: bool) -> None:
         self._part_picking_mode = active
         self._picking_active = not active
@@ -223,26 +232,19 @@ class Viewport(QtInteractor):
         self._selected_part_idx = part_idx
         mesh = self._part.mesh
         
-        if len(mesh.tets) > 0 and len(mesh.tet_to_part) > 0:
+        tri_to_part = getattr(mesh, 'tri_to_part', None)
+        if tri_to_part is not None and len(tri_to_part) == len(mesh.surf_tris):
+            part_mask = tri_to_part == part_idx
+            if not np.any(part_mask):
+                return
+            part_tris = mesh.surf_tris[part_mask]
+        elif len(mesh.tets) > 0 and len(mesh.tet_to_part) > 0:
             tet_to_part = mesh.tet_to_part
             part_mask = tet_to_part == part_idx
             if not np.any(part_mask):
                 return
-            
-            part_tets = mesh.tets[part_mask]
-            if len(part_tets) == 0:
-                return
-            
-            part_nodes = np.unique(part_tets.ravel())
-            part_tris = mesh.surf_tris[np.isin(mesh.surf_tris, part_nodes).any(axis=1)]
-        elif hasattr(mesh, 'tri_to_part') and len(mesh.tri_to_part) > 0:
-            tri_to_part = mesh.tri_to_part
-            part_mask = tri_to_part == part_idx
-            if not np.any(part_mask):
-                return
-            
-            part_tris = mesh.surf_tris[part_mask]
-            part_nodes = np.unique(part_tris.ravel())
+            part_nodes = np.unique(mesh.tets[part_mask].ravel())
+            part_tris = mesh.surf_tris[np.isin(mesh.surf_tris, part_nodes).all(axis=1)]
         else:
             return
         
@@ -250,7 +252,7 @@ class Viewport(QtInteractor):
             return
         
         faces = np.hstack([np.full((len(part_tris), 1), 3), part_tris]).ravel()
-        sub = pv.PolyData(mesh.points[part_nodes], faces)
+        sub = pv.PolyData(mesh.points, faces)
         
         self._part_highlight_actor = self.add_mesh(
             sub, color=PART_HIGHLIGHT_COLOR, opacity=0.7,
@@ -271,31 +273,58 @@ class Viewport(QtInteractor):
             face_id = int(self._part.mesh.tri_to_face[tri_id])
             self.face_picked.emit(face_id)
 
+    def _part_index_from_tri_id(self, tri_id: int) -> int:
+        if self._part is None or self._part.mesh is None:
+            return 0
+        tri_to_part = getattr(self._part.mesh, 'tri_to_part', None)
+        if tri_to_part is not None and 0 <= tri_id < len(tri_to_part):
+            return int(tri_to_part[tri_id])
+        return 0
+
+    def _emit_probe_for_pick(self, x: float, y: float) -> bool:
+        if self._result is None or self._part is None or self._part.mesh is None or self._main_actor is None:
+            return False
+        renderer = self.GetRenderWindow().GetRenderers().GetFirstRenderer()
+        if renderer is None:
+            return False
+
+        self._picker.SetPickFromList(True)
+        self._picker.InitializePickList()
+        self._picker.AddPickList(self._main_actor)
+        self._picker.Pick(x, self.GetRenderWindow().GetSize()[1] - y, 0, renderer)
+        cell_id = int(self._picker.GetCellId())
+        if cell_id < 0 or cell_id >= len(self._part.mesh.surf_tris):
+            return False
+
+        tri = self._part.mesh.surf_tris[cell_id]
+        pick_pos = np.asarray(self._picker.GetPickPosition(), dtype=np.float64)
+        pts = self._part.mesh.points[tri]
+        point_id = int(tri[np.argmin(np.linalg.norm(pts - pick_pos, axis=1))])
+        if point_id < 0 or point_id >= self._result.num_nodes:
+            return False
+
+        ux = self._result.displacements[point_id, 0] * 1000
+        uy = self._result.displacements[point_id, 1] * 1000
+        uz = self._result.displacements[point_id, 2] * 1000
+        disp_mag = self._result.disp_magnitude[point_id] * 1000
+        stress = self._result.von_mises[point_id] / 1e6
+        coords = self._part.mesh.points[point_id]
+        self.probe_data.emit({
+            "point_id": int(point_id),
+            "coords": coords.tolist(),
+            "ux": float(ux),
+            "uy": float(uy),
+            "uz": float(uz),
+            "disp_magnitude": float(disp_mag),
+            "von_mises": float(stress),
+        })
+        return True
+
     def mousePressEvent(self, event):
-        if self._probe_mode and self._result is not None and self._part is not None and self._part.mesh is not None:
+        if self._probe_mode:
             pos = event.position()
-            x, y = pos.x(), pos.y()
-            renderer = self.GetRenderWindow().GetRenderers().GetFirstRenderer()
-            if renderer:
-                self._point_picker.Pick(x, self.GetRenderWindow().GetSize()[1] - y, 0, renderer)
-                point_id = self._point_picker.GetPointId()
-                if point_id >= 0 and point_id < self._result.num_nodes:
-                    ux = self._result.displacements[point_id, 0] * 1000
-                    uy = self._result.displacements[point_id, 1] * 1000
-                    uz = self._result.displacements[point_id, 2] * 1000
-                    disp_mag = self._result.disp_magnitude[point_id] * 1000
-                    stress = self._result.von_mises[point_id] / 1e6
-                    coords = self._part.mesh.points[point_id]
-                    self.probe_data.emit({
-                        "point_id": int(point_id),
-                        "coords": coords.tolist(),
-                        "ux": float(ux),
-                        "uy": float(uy),
-                        "uz": float(uz),
-                        "disp_magnitude": float(disp_mag),
-                        "von_mises": float(stress),
-                    })
-                    return
+            if self._emit_probe_for_pick(pos.x(), pos.y()):
+                return
         
         if self._part_picking_mode and self._part is not None and self._part.mesh is not None:
             pos = event.position()
@@ -310,12 +339,7 @@ class Viewport(QtInteractor):
                 if cell_id >= 0:
                     tri_id = int(cell_id)
                     if 0 <= tri_id < len(self._part.mesh.tri_to_face):
-                        tet_to_part = self._part.mesh.tet_to_part
-                        if len(tet_to_part) > 0:
-                            part_idx = int(tet_to_part[tri_id] if tri_id < len(tet_to_part) else 0)
-                        else:
-                            part_idx = 0
-                        self.part_picked.emit(part_idx)
+                        self.part_picked.emit(self._part_index_from_tri_id(tri_id))
                         return
         
         if self._picking_active and self._part is not None and self._main_actor is not None:
@@ -349,12 +373,7 @@ class Viewport(QtInteractor):
                 if cell_id >= 0:
                     tri_id = int(cell_id)
                     if 0 <= tri_id < len(self._part.mesh.tri_to_face):
-                        tet_to_part = self._part.mesh.tet_to_part
-                        if len(tet_to_part) > 0:
-                            part_idx = int(tet_to_part[tri_id] if tri_id < len(tet_to_part) else 0)
-                        else:
-                            part_idx = 0
-                        self.part_picked.emit(part_idx)
+                        self.part_picked.emit(self._part_index_from_tri_id(tri_id))
                         return
         super().mousePressEvent(event)
 
@@ -462,7 +481,7 @@ class Viewport(QtInteractor):
                 self.remove_actor(self._main_actor)
             except Exception:
                 pass
-            if self._face_colors:
+            if self._face_colors or self._part_colors:
                 self._main_actor = self.add_mesh(
                     self._surf, scalars="face_color", show_edges=False,
                     line_width=0.5, opacity=0.9, pickable=True, smooth_shading=True,
@@ -528,7 +547,7 @@ class Viewport(QtInteractor):
                 self.remove_actor(self._main_actor)
             except Exception:
                 pass
-            if self._face_colors:
+            if self._face_colors or self._part_colors:
                 self._main_actor = self.add_mesh(
                     self._surf, scalars="face_color", show_edges=True,
                     edge_color=(0.4, 0.4, 0.4), line_width=0.5, opacity=0.9, pickable=True,
@@ -595,7 +614,7 @@ class Viewport(QtInteractor):
             pass
         self._main_actor = self.add_mesh(
             surf, scalars=scalar_name, cmap="jet", show_edges=False,
-            opacity=1.0, pickable=False, scalar_bar_args={"title": scalar_name},
+            opacity=1.0, pickable=True, scalar_bar_args={"title": scalar_name},
         )
         self.add_text(title, font_size=10)
 
@@ -626,7 +645,7 @@ class Viewport(QtInteractor):
             pass
         self._main_actor = self.add_mesh(
             surf, scalars="von Mises (MPa)", cmap="jet", show_edges=False,
-            opacity=1.0, pickable=False, scalar_bar_args={"title": "von Mises (MPa)"},
+            opacity=1.0, pickable=True, scalar_bar_args={"title": "von Mises (MPa)"},
         )
         self.add_text("应力 ISO 图", font_size=10)
 

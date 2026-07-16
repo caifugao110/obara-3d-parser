@@ -62,6 +62,12 @@ for pkg in ("vtk", "pyvista", "PySide6", "shiboken6"):
     binaries += b
     hiddenimports += h
 
+dlls_to_root = ["Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6OpenGL.dll", "Qt6OpenGLWidgets.dll", "shiboken6.abi3.dll"]
+for i, (src, dst) in enumerate(binaries):
+    filename = os.path.basename(src)
+    if filename in dlls_to_root:
+        binaries[i] = (src, ".")
+
 hiddenimports += ["gmsh"]
 gmsh_dll = _find_gmsh_dll()
 if gmsh_dll and os.path.exists(gmsh_dll):
@@ -70,7 +76,7 @@ if gmsh_dll and os.path.exists(gmsh_dll):
 else:
     print("[spec] WARNING: could not locate gmsh native library!")
 
-datas += [("material_data", "material_data"), ("assets", "assets")]
+datas += [("material_data", "material_data"), ("assets", "assets"), ("pyproject.toml", ".")]
 
 a = Analysis(
     ["run.py"],

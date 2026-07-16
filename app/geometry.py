@@ -25,6 +25,7 @@ class TetMesh:
     face_areas: np.ndarray     # (F,)  float64   area of each face
     face_normals: np.ndarray   # (F,3) float64   unit normal of each face
     tet_to_part: np.ndarray    # (M,)  int32     part index for each tetrahedron
+    tri_to_part: np.ndarray = field(default_factory=lambda: np.zeros((0,), dtype=np.int32))
 
     @property
     def num_nodes(self) -> int:
@@ -74,8 +75,19 @@ def _finalize_mesh(mesh_size: float, part_name: str) -> TetMesh:
 
     # --- surface triangles, grouped by 2D entity (face) ---
     surf_entities = gmsh.model.getEntities(2)
+    vol_entities = gmsh.model.getEntities(3)
+    part_face_map: dict[int, int] = {}
+    for part_idx, (dim, vol_tag) in enumerate(vol_entities):
+        try:
+            boundary = gmsh.model.getBoundary([(dim, vol_tag)], oriented=False, recursive=False)
+        except Exception:
+            continue
+        for face_dim, face_tag in boundary:
+            if face_dim == 2:
+                part_face_map[int(face_tag)] = part_idx
     tri_list: List[np.ndarray] = []
     tri_face_list: List[int] = []
+    tri_part_list: List[np.ndarray] = []
     face_centers: List[np.ndarray] = []
     face_areas: List[float] = []
     face_normals: List[np.ndarray] = []
@@ -92,6 +104,7 @@ def _finalize_mesh(mesh_size: float, part_name: str) -> TetMesh:
                             dtype=np.int32)
         tri_list.append(tris_idx)
         tri_face_list.append(np.full(len(tris_idx), face_id, dtype=np.int32))
+        tri_part_list.append(np.full(len(tris_idx), part_face_map.get(int(tag), 0), dtype=np.int32))
 
         # face centroid = mean of triangle centroids weighted by area
         p0 = pts[tris_idx[:, 0]]
@@ -116,9 +129,11 @@ def _finalize_mesh(mesh_size: float, part_name: str) -> TetMesh:
     if tri_list:
         surf_tris = np.vstack(tri_list)
         tri_to_face = np.concatenate(tri_face_list)
+        tri_to_part = np.concatenate(tri_part_list)
     else:
         surf_tris = np.zeros((0, 3), dtype=np.int32)
         tri_to_face = np.zeros((0,), dtype=np.int32)
+        tri_to_part = np.zeros((0,), dtype=np.int32)
 
     return TetMesh(
         points=pts,
@@ -129,6 +144,7 @@ def _finalize_mesh(mesh_size: float, part_name: str) -> TetMesh:
         face_areas=np.array(face_areas, dtype=np.float64) if face_areas else np.zeros((0,)),
         face_normals=np.array(face_normals, dtype=np.float64) if face_normals else np.zeros((0, 3)),
         tet_to_part=np.zeros(len(tets), dtype=np.int32),
+        tri_to_part=tri_to_part,
     )
 
 
@@ -147,28 +163,26 @@ def load_step(path: str | Path, name: Optional[str] = None) -> list[Part]:
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
-        gmsh.option.setNumber("Mesh.MeshSizeMin", 1.0)
-        gmsh.option.setNumber("Mesh.MeshSizeMax", 3.0)
+        gmsh.option.setNumber("Mesh.Algorithm", 1)  # Delaunay for speed
+        gmsh.option.setNumber("Mesh.MeshSizeMin", 2.0)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", 6.0)
         gmsh.model.add(base_name)
         gmsh.merge(str(path))
-        
         vol_entities = gmsh.model.getEntities(3)
-        
+        gmsh.model.mesh.generate(2)
+        mesh = _finalize_mesh_for_display(base_name)
+
         if len(vol_entities) == 0:
-            gmsh.model.mesh.generate(2)
-            mesh = _finalize_mesh_for_display(base_name)
             return [Part(name=base_name, mesh=mesh, source=str(path), _step_path=path)]
-        
+
         parts = []
         for idx, (dim, tag) in enumerate(vol_entities):
             part_name = f"{base_name}_{idx+1}" if len(vol_entities) > 1 else base_name
-            gmsh.model.mesh.generate(2)
-            mesh = _finalize_mesh_for_display(part_name)
             parts.append(
-                Part(name=part_name, mesh=mesh, source=str(path), 
+                Part(name=part_name, mesh=mesh, source=str(path),
                      _step_path=path, _entity_tag=tag)
             )
-        
+
         return parts
     finally:
         gmsh.finalize()
@@ -182,8 +196,19 @@ def _finalize_mesh_for_display(part_name: str) -> TetMesh:
     tag_to_idx = {int(t): i for i, t in enumerate(node_tags)}
 
     surf_entities = gmsh.model.getEntities(2)
+    vol_entities = gmsh.model.getEntities(3)
+    part_face_map: dict[int, int] = {}
+    for part_idx, (dim, vol_tag) in enumerate(vol_entities):
+        try:
+            boundary = gmsh.model.getBoundary([(dim, vol_tag)], oriented=False, recursive=False)
+        except Exception:
+            continue
+        for face_dim, face_tag in boundary:
+            if face_dim == 2:
+                part_face_map[int(face_tag)] = part_idx
     tri_list: List[np.ndarray] = []
     tri_face_list: List[int] = []
+    tri_part_list: List[np.ndarray] = []
     face_centers: List[np.ndarray] = []
     face_areas: List[float] = []
     face_normals: List[np.ndarray] = []
@@ -200,6 +225,7 @@ def _finalize_mesh_for_display(part_name: str) -> TetMesh:
                             dtype=np.int32)
         tri_list.append(tris_idx)
         tri_face_list.append(np.full(len(tris_idx), face_id, dtype=np.int32))
+        tri_part_list.append(np.full(len(tris_idx), part_face_map.get(int(tag), 0), dtype=np.int32))
 
         p0 = pts[tris_idx[:, 0]]
         p1 = pts[tris_idx[:, 1]]
@@ -222,9 +248,11 @@ def _finalize_mesh_for_display(part_name: str) -> TetMesh:
     if tri_list:
         surf_tris = np.vstack(tri_list)
         tri_to_face = np.concatenate(tri_face_list)
+        tri_to_part = np.concatenate(tri_part_list)
     else:
         surf_tris = np.zeros((0, 3), dtype=np.int32)
         tri_to_face = np.zeros((0,), dtype=np.int32)
+        tri_to_part = np.zeros((0,), dtype=np.int32)
 
     return TetMesh(
         points=pts,
@@ -235,6 +263,7 @@ def _finalize_mesh_for_display(part_name: str) -> TetMesh:
         face_areas=np.array(face_areas, dtype=np.float64) if face_areas else np.zeros((0,)),
         face_normals=np.array(face_normals, dtype=np.float64) if face_normals else np.zeros((0, 3)),
         tet_to_part=np.zeros((0,), dtype=np.int32),
+        tri_to_part=tri_to_part,
     )
 
 
@@ -251,8 +280,9 @@ def make_test_beam(
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
-        gmsh.option.setNumber("Mesh.MeshSizeMin", 1.0)
-        gmsh.option.setNumber("Mesh.MeshSizeMax", 3.0)
+        gmsh.option.setNumber("Mesh.Algorithm", 1)  # Delaunay for speed
+        gmsh.option.setNumber("Mesh.MeshSizeMin", 2.0)
+        gmsh.option.setNumber("Mesh.MeshSizeMax", 6.0)
         gmsh.model.add(name)
         gmsh.model.occ.addBox(0.0, -width / 2.0, -height / 2.0, length, width, height)
         gmsh.model.occ.synchronize()
@@ -285,6 +315,7 @@ def mesh_part(parts: list[Part], mesh_size: float) -> TetMesh:
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.option.setNumber("Mesh.Algorithm", 1)  # Delaunay for speed
         gmsh.option.setNumber("Mesh.MeshSizeMin", mesh_size * 0.5)
         gmsh.option.setNumber("Mesh.MeshSizeMax", mesh_size)
         gmsh.option.setNumber("Mesh.Optimize", 1)

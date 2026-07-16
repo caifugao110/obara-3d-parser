@@ -21,24 +21,51 @@ $iconFile = Join-Path (Join-Path $projectRoot "assets") "app_icon.ico"
 $distDir = Join-Path $projectRoot "dist"
 $buildDir = Join-Path $projectRoot "build"
 $exePath = Join-Path (Join-Path $distDir "obara-3d-parser") "obara-3d-parser.exe"
+$venvDir = Join-Path $projectRoot ".venv"
 
 Write-Host "`n=== obara-3d-parser Build Script ===" -ForegroundColor Cyan
 
 Write-Host "`n[1/6] Validating environment..." -ForegroundColor Yellow
 
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Error "Python not found in PATH. Please install Python 3.13+."
+$pythonExe = $null
+$pyinstallerExe = $null
+
+if (Test-Path $venvDir) {
+    $venvPython = Join-Path (Join-Path $venvDir "Scripts") "python.exe"
+    $venvPyinstaller = Join-Path (Join-Path $venvDir "Scripts") "pyinstaller.exe"
+    
+    if (Test-Path $venvPython) {
+        $pythonExe = $venvPython
+        Write-Host "  Found virtual environment: $venvDir" -ForegroundColor Green
+    }
+    if (Test-Path $venvPyinstaller) {
+        $pyinstallerExe = $venvPyinstaller
+    }
+}
+
+if (-not $pythonExe) {
+    $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
+    if (-not $pythonExe) {
+        Write-Error "Python not found. Please install Python 3.13+ or create a virtual environment."
+    }
+    Write-Host "  Using system Python: $pythonExe" -ForegroundColor Yellow
+}
+
+if (-not $pyinstallerExe) {
+    $pyinstallerExe = (Get-Command pyinstaller -ErrorAction SilentlyContinue).Source
+    if (-not $pyinstallerExe) {
+        Write-Error "PyInstaller not found. Run: $pythonExe -m pip install pyinstaller"
+    }
+    Write-Host "  Using system PyInstaller: $pyinstallerExe" -ForegroundColor Yellow
+} else {
+    Write-Host "  Using venv PyInstaller: $pyinstallerExe" -ForegroundColor Green
 }
 
 try {
-    $pythonVersion = python --version 2>&1
+    $pythonVersion = & $pythonExe --version 2>&1
     Write-Host "  Python: $pythonVersion"
 } catch {
     Write-Error "Failed to get Python version."
-}
-
-if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
-    Write-Error "PyInstaller not installed. Run: pip install pyinstaller"
 }
 
 if (-not (Test-Path $specFile)) {
@@ -50,8 +77,6 @@ if (-not (Test-Path $iconFile)) {
 }
 
 Write-Host "`n[2/6] Cleaning previous build artifacts..." -ForegroundColor Yellow
-
-$venvDir = Join-Path $projectRoot ".venv"
 
 if (Test-Path $distDir) {
     Remove-Item -Recurse -Force $distDir
@@ -80,7 +105,7 @@ try {
     
     Write-Host "  Command: pyinstaller $($args -join ' ')"
     
-    $process = Start-Process -FilePath "pyinstaller" -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardOutput "build_log.txt" -RedirectStandardError "build_err.txt"
+    $process = Start-Process -FilePath $pyinstallerExe -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardOutput "build_log.txt" -RedirectStandardError "build_err.txt"
     
     if ($process.ExitCode -ne 0) {
         Write-Host "`n=== BUILD FAILED ===" -ForegroundColor Red

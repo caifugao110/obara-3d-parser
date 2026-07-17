@@ -149,22 +149,8 @@ class StudySetupPanel(QDockWidget):
     mesh_clicked = Signal()
     part_material_clicked = Signal(int)
     solver_backend_changed = Signal(str)
-    show_displacement_clicked = Signal()
-    show_stress_clicked = Signal()
-    probe_displacement_clicked = Signal()
-    probe_stress_clicked = Signal()
-    face_color_pick_clicked = Signal()
-    face_color_apply_clicked = Signal()
-    face_color_clear_clicked = Signal()
-    part_color_pick_clicked = Signal()
-    part_color_apply_clicked = Signal()
-    part_color_clear_clicked = Signal()
     edit_fixture_requested = Signal(int)
     edit_load_requested = Signal(int)
-    probe_displacement_clicked = Signal()
-    probe_stress_clicked = Signal()
-    face_color_selected = Signal(tuple)
-    part_color_selected = Signal(tuple)
 
     def __init__(self, parent=None):
         super().__init__("分析设置", parent)
@@ -173,6 +159,17 @@ class StudySetupPanel(QDockWidget):
         container = QWidget()
         v = QVBoxLayout(container)
         v.setContentsMargins(6, 6, 6, 6)
+
+        self.tabs = QTabWidget()
+        v.addWidget(self.tabs)
+
+        part_tab = QWidget()
+        part_layout = QVBoxLayout(part_tab)
+        part_layout.setContentsMargins(6, 6, 6, 6)
+
+        setup_tab = QWidget()
+        setup_layout = QVBoxLayout(setup_tab)
+        setup_layout.setContentsMargins(6, 6, 6, 6)
 
         # --- part info ---
         gb_part = QGroupBox("零件与材质")
@@ -185,7 +182,9 @@ class StudySetupPanel(QDockWidget):
         f_part.addRow("数模:", self.lbl_part)
         f_part.addRow("材质:", self.material_list)
         f_part.addRow("网格:", self.lbl_mesh)
-        v.addWidget(gb_part)
+        part_layout.addWidget(gb_part)
+        part_layout.addStretch(1)
+        self.tabs.addTab(part_tab, "零件与材质")
 
         # --- fixtures ---
         gb_fix = QGroupBox("固定位置 (约束)")
@@ -201,7 +200,7 @@ class StudySetupPanel(QDockWidget):
         rowf.addWidget(self.btn_add_fix)
         rowf.addWidget(self.btn_rm_fix)
         vf.addLayout(rowf)
-        v.addWidget(gb_fix)
+        setup_layout.addWidget(gb_fix)
 
         # --- loads ---
         gb_load = QGroupBox("载荷 (加压位置与压力)")
@@ -217,7 +216,7 @@ class StudySetupPanel(QDockWidget):
         rowl.addWidget(self.btn_add_load)
         rowl.addWidget(self.btn_rm_load)
         vl.addLayout(rowl)
-        v.addWidget(gb_load)
+        setup_layout.addWidget(gb_load)
 
         # --- coordinate system ---
         gb_cs = QGroupBox("解析坐标系 (原点 + X轴 + Y轴)")
@@ -238,7 +237,7 @@ class StudySetupPanel(QDockWidget):
                    self.cs_xx, self.cs_xy, self.cs_xz,
                    self.cs_yx, self.cs_yy, self.cs_yz):
             sb.valueChanged.connect(self._push_coord)
-        v.addWidget(gb_cs)
+        setup_layout.addWidget(gb_cs)
 
         # --- mesh density ---
         gb_mesh = QGroupBox("网格密度")
@@ -265,7 +264,7 @@ class StudySetupPanel(QDockWidget):
         self.btn_mesh = QPushButton("网格划分")
         self.btn_mesh.setStyleSheet("padding:6px;")
         fm.addRow(self.btn_mesh)
-        v.addWidget(gb_mesh)
+        setup_layout.addWidget(gb_mesh)
         self.mesh_slider.valueChanged.connect(self._on_mesh_slider_changed)
         self.btn_mesh.clicked.connect(self.mesh_clicked.emit)
 
@@ -277,84 +276,22 @@ class StudySetupPanel(QDockWidget):
         self.solver_combo.currentIndexChanged.connect(self._on_solver_changed)
         fs.addRow("后端:", self.solver_combo)
         fs.addRow(QLabel("不使用 SolidWorks COM 时，外部 FEA 后端是最接近的可部署方案。"))
-        v.addWidget(gb_solver)
-
-
-        # --- probe mode ---
-        gb_probe = QGroupBox("探测模式")
-        vp = QVBoxLayout(gb_probe)
-        self.btn_probe_disp = QPushButton("探测位移")
-        self.btn_probe_disp.setCheckable(True)
-        self.btn_probe_disp.clicked.connect(lambda checked: self.probe_displacement_clicked.emit() if checked else None)
-        self.btn_probe_stress = QPushButton("探测应力")
-        self.btn_probe_stress.setCheckable(True)
-        self.btn_probe_stress.clicked.connect(lambda checked: self.probe_stress_clicked.emit() if checked else None)
-        vp.addWidget(self.btn_probe_disp)
-        vp.addWidget(self.btn_probe_stress)
-        v.addWidget(gb_probe)
-
-        # --- color setup ---
-        gb_color = QGroupBox("颜色设置")
-        vc = QVBoxLayout(gb_color)
-        
-        # face color
-        gb_face = QGroupBox("面颜色")
-        vf = QHBoxLayout(gb_face)
-        self.btn_face_color_pick = QPushButton("拾取")
-        self.btn_face_color_pick.setFixedWidth(50)
-        self.btn_face_color_pick.setStyleSheet("background-color: rgb(204, 51, 51);")
-        self.btn_face_color_apply = QPushButton("应用")
-        self.btn_face_color_clear = QPushButton("清除")
-        vf.addWidget(self.btn_face_color_pick)
-        vf.addWidget(self.btn_face_color_apply)
-        vf.addWidget(self.btn_face_color_clear)
-        vc.addWidget(gb_face)
-        
-        # part color
-        gb_part_color = QGroupBox("零件颜色")
-        vp2 = QHBoxLayout(gb_part_color)
-        self.btn_part_color_pick = QPushButton("拾取")
-        self.btn_part_color_pick.setFixedWidth(50)
-        self.btn_part_color_pick.setStyleSheet("background-color: rgb(51, 51, 204);")
-        self.btn_part_color_apply = QPushButton("应用")
-        self.btn_part_color_clear = QPushButton("清除")
-        vp2.addWidget(self.btn_part_color_pick)
-        vp2.addWidget(self.btn_part_color_apply)
-        vp2.addWidget(self.btn_part_color_clear)
-        vc.addWidget(gb_part)
-        v.addWidget(gb_color)
-
-
-
-        self.btn_face_color_pick.clicked.connect(self.face_color_pick_clicked.emit)
-        self.btn_face_color_apply.clicked.connect(self.face_color_apply_clicked.emit)
-        self.btn_face_color_clear.clicked.connect(self.face_color_clear_clicked.emit)
-        self.btn_part_color_pick.clicked.connect(self.part_color_pick_clicked.emit)
-        self.btn_part_color_apply.clicked.connect(self.part_color_apply_clicked.emit)
-        self.btn_part_color_clear.clicked.connect(self.part_color_clear_clicked.emit)
+        setup_layout.addWidget(gb_solver)
 
         self.btn_run = QPushButton("▶ 运行仿真")
         self.btn_run.setStyleSheet("padding:8px; font-weight:bold;")
         self.btn_run.clicked.connect(self.run_clicked.emit)
-        v.addWidget(self.btn_run)
+        setup_layout.addWidget(self.btn_run)
 
         self.simulation_log = QTextEdit()
         self.simulation_log.setReadOnly(True)
         self.simulation_log.setMaximumHeight(120)
         self.simulation_log.setPlaceholderText("仿真过程信息将显示在此处...")
         self.simulation_log.setStyleSheet("font-size:11px;")
-        v.addWidget(self.simulation_log)
-
-        v.addStretch(1)
+        setup_layout.addWidget(self.simulation_log)
+        setup_layout.addStretch(1)
+        self.tabs.addTab(setup_tab, "分析设置")
         self.setWidget(container)
-
-    def set_face_color_preview(self, color) -> None:
-        r, g, b = color
-        self.btn_face_color_pick.setStyleSheet(f"background-color: rgb({int(r * 255)}, {int(g * 255)}, {int(b * 255)});")
-
-    def set_part_color_preview(self, color) -> None:
-        r, g, b = color
-        self.btn_part_color_pick.setStyleSheet(f"background-color: rgb({int(r * 255)}, {int(g * 255)}, {int(b * 255)});")
 
     @staticmethod
     def _row(*widgets) -> QWidget:

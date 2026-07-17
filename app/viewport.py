@@ -76,6 +76,7 @@ class Viewport(QtInteractor):
         self._fixture_actors: List = []
         self._load_actors: List = []
         self._cs_actor = None
+        self._cs_actors: List = []
         self._selected_face_actor = None
         self._part_highlight_actor = None
         self._picking_active = False
@@ -120,6 +121,7 @@ class Viewport(QtInteractor):
         self._fixture_actors.clear()
         self._load_actors.clear()
         self._cs_actor = None
+        self._cs_actors.clear()
         self._selected_face_actor = None
         self._part_highlight_actor = None
         self._surf = None
@@ -420,6 +422,12 @@ class Viewport(QtInteractor):
     # Coordinate-system triad
     # ------------------------------------------------------------------ #
     def show_coord_system(self, origin, x_axis, y_axis) -> None:
+        for actor in self._cs_actors:
+            try:
+                self.remove_actor(actor)
+            except Exception:
+                pass
+        self._cs_actors.clear()
         if self._cs_actor is not None:
             try:
                 self.remove_actor(self._cs_actor)
@@ -429,20 +437,25 @@ class Viewport(QtInteractor):
         x = np.asarray(x_axis, dtype=float)
         y = np.asarray(y_axis, dtype=float)
         z = np.cross(x, y)
-        scale = self._scene_scale() * 0.15
-        cs_origin = np.array([0.0, 0.0, 0.0])
+        scale = max(self._scene_scale() * 0.12, 1e-6)
+        cs_origin = np.asarray(origin, dtype=float)
         for vec, col, label in ((x, (1, 0, 0), "X"), (y, (0, 1, 0), "Y"), (z, (0, 0, 1), "Z")):
             v = vec / (np.linalg.norm(vec) + 1e-30) * scale
             arrow = pv.Arrow(start=cs_origin, direction=v)
-            self.add_mesh(arrow, color=col)
+            self._cs_actors.append(self.add_mesh(arrow, color=col, pickable=False))
             label_pos = cs_origin + v * 1.1
-            self.add_text(label, position=label_pos, font_size=12, color=col, shadow=True)
+            self._cs_actors.append(
+                self.add_point_labels(
+                    [label_pos], [label], font_size=12, text_color=col,
+                    shape_opacity=0.0, show_points=False, pickable=False,
+                )
+            )
 
     def _scene_scale(self) -> float:
-        if self._part is None:
+        if self._part is None or self._part.mesh is None or self._part.mesh.points.size == 0:
             return 1.0
         bb = self._part.mesh.points.max(axis=0) - self._part.mesh.points.min(axis=0)
-        return float(np.linalg.norm(bb))
+        return max(float(np.linalg.norm(bb)), 1.0)
 
     # ------------------------------------------------------------------ #
     # Result display

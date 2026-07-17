@@ -214,16 +214,8 @@ class MainWindow(QMainWindow):
         self.setup_panel.solver_backend_changed.connect(self._on_solver_backend_changed)
         self.setup_panel.btn_add_fix.clicked.connect(self._begin_pick_fixture)
         self.setup_panel.btn_add_load.clicked.connect(self._begin_pick_load)
-        self.setup_panel.probe_displacement_clicked.connect(self._begin_probe_disp)
-        self.setup_panel.probe_stress_clicked.connect(self._begin_probe_stress)
         self.setup_panel.edit_fixture_requested.connect(self._on_edit_fixture)
         self.setup_panel.edit_load_requested.connect(self._on_edit_load)
-        self.setup_panel.face_color_pick_clicked.connect(self._choose_face_color)
-        self.setup_panel.part_color_pick_clicked.connect(self._choose_part_color)
-        self.setup_panel.face_color_apply_clicked.connect(self._begin_pick_color)
-        self.setup_panel.face_color_clear_clicked.connect(self._clear_face_colors)
-        self.setup_panel.part_color_apply_clicked.connect(self._begin_pick_part_color)
-        self.setup_panel.part_color_clear_clicked.connect(self._clear_part_colors)
         self.addDockWidget(Qt.RightDockWidgetArea, self.setup_panel)
 
         self._build_toolbar()
@@ -295,6 +287,30 @@ class MainWindow(QMainWindow):
         self.btn_select_part.clicked.connect(self._begin_pick_part)
         tb.addWidget(self.btn_select_part)
 
+        tb.addSeparator()
+        self.btn_face_color_pick = QPushButton("面颜色")
+        self.btn_face_color_pick.setFixedWidth(64)
+        self.btn_face_color_pick.clicked.connect(self._choose_face_color)
+        tb.addWidget(self.btn_face_color_pick)
+        a_face_color_apply = QAction("应用面颜色", self)
+        a_face_color_apply.triggered.connect(self._begin_pick_color)
+        tb.addAction(a_face_color_apply)
+        a_face_color_clear = QAction("清除面颜色", self)
+        a_face_color_clear.triggered.connect(self._clear_face_colors)
+        tb.addAction(a_face_color_clear)
+
+        self.btn_part_color_pick = QPushButton("零件颜色")
+        self.btn_part_color_pick.setFixedWidth(72)
+        self.btn_part_color_pick.clicked.connect(self._choose_part_color)
+        tb.addWidget(self.btn_part_color_pick)
+        a_part_color_apply = QAction("应用零件颜色", self)
+        a_part_color_apply.triggered.connect(self._begin_pick_part_color)
+        tb.addAction(a_part_color_apply)
+        a_part_color_clear = QAction("清除零件颜色", self)
+        a_part_color_clear.triggered.connect(self._clear_part_colors)
+        tb.addAction(a_part_color_clear)
+        self._update_color_button_previews()
+
     def _build_menu(self) -> None:
         mb = self.menuBar()
         m_file = mb.addMenu("文件")
@@ -313,6 +329,15 @@ class MainWindow(QMainWindow):
         m_view.addAction("探测模式", self._toggle_probe_mode)
         m_view.addAction("重置视图", self.viewport.reset_camera)
         m_view.addAction("重置布局", self._reset_layout)
+
+        m_color = mb.addMenu("颜色设置")
+        m_color.addAction("选择面颜色", self._choose_face_color)
+        m_color.addAction("应用面颜色", self._begin_pick_color)
+        m_color.addAction("清除面颜色", self._clear_face_colors)
+        m_color.addSeparator()
+        m_color.addAction("选择零件颜色", self._choose_part_color)
+        m_color.addAction("应用零件颜色", self._begin_pick_part_color)
+        m_color.addAction("清除零件颜色", self._clear_part_colors)
 
         m_help = mb.addMenu("帮助")
         m_help.addAction("关于", self._show_about)
@@ -379,36 +404,46 @@ class MainWindow(QMainWindow):
         self.setup_panel.set_study(self.study)
         self.material_panel.set_parts([p.name for p in parts])
         
-        combined_mesh = None
-        tri_to_part = None
         if all(p.mesh is not None for p in parts):
-            pts_list = []
-            tri_list = []
-            tri_to_part_list = []
-            node_offset = 0
-            for part_idx, p in enumerate(parts):
-                pts_list.append(p.mesh.points)
-                tri_list.append(p.mesh.surf_tris + node_offset)
-                tri_to_part_list.append(np.full(len(p.mesh.surf_tris), part_idx, dtype=np.int32))
-                node_offset += p.mesh.points.shape[0]
-            
-            combined_points = np.vstack(pts_list)
-            combined_tris = np.vstack(tri_list)
-            tri_to_part = np.concatenate(tri_to_part_list)
-            
-            from .geometry import TetMesh
-            combined_mesh = TetMesh(
-                points=combined_points,
-                tets=np.zeros((0, 4), dtype=np.int32),
-                surf_tris=combined_tris,
-                tri_to_face=np.zeros(len(combined_tris), dtype=np.int32),
-                face_centers=np.zeros((0, 3)),
-                face_areas=np.zeros((0,)),
-                face_normals=np.zeros((0, 3)),
-                tet_to_part=np.zeros((0,), dtype=np.int32),
-            )
-            combined_mesh.tri_to_part = tri_to_part
-            parts[0].mesh = combined_mesh
+            first_mesh = parts[0].mesh
+            if all(p.mesh is first_mesh for p in parts):
+                display_mesh = first_mesh
+            else:
+                pts_list = []
+                tri_list = []
+                tri_to_face_list = []
+                tri_to_part_list = []
+                face_centers_list = []
+                face_areas_list = []
+                face_normals_list = []
+                node_offset = 0
+                face_offset = 0
+                for part_idx, p in enumerate(parts):
+                    mesh = p.mesh
+                    pts_list.append(mesh.points)
+                    tri_list.append(mesh.surf_tris + node_offset)
+                    tri_to_face_list.append(mesh.tri_to_face + face_offset)
+                    tri_to_part_list.append(np.full(len(mesh.surf_tris), part_idx, dtype=np.int32))
+                    face_centers_list.append(mesh.face_centers)
+                    face_areas_list.append(mesh.face_areas)
+                    face_normals_list.append(mesh.face_normals)
+                    node_offset += mesh.points.shape[0]
+                    face_offset += mesh.num_faces
+
+                from .geometry import TetMesh
+                display_mesh = TetMesh(
+                    points=np.vstack(pts_list),
+                    tets=np.zeros((0, 4), dtype=np.int32),
+                    surf_tris=np.vstack(tri_list),
+                    tri_to_face=np.concatenate(tri_to_face_list),
+                    face_centers=np.vstack(face_centers_list) if face_centers_list else np.zeros((0, 3)),
+                    face_areas=np.concatenate(face_areas_list) if face_areas_list else np.zeros((0,)),
+                    face_normals=np.vstack(face_normals_list) if face_normals_list else np.zeros((0, 3)),
+                    tet_to_part=np.zeros((0,), dtype=np.int32),
+                    tri_to_part=np.concatenate(tri_to_part_list),
+                )
+            parts[0].mesh = display_mesh
+            self.viewport.set_part(parts[0], show_edges=False, smooth_shading=True)
         
         self.viewport.show_coord_system(
             self.study.coord_system.origin,
@@ -553,14 +588,14 @@ class MainWindow(QMainWindow):
             return
         if len(self.study.parts) <= 1:
             self.viewport.apply_part_color(0, self._part_color)
-            r, g, b = self._face_color
+            r, g, b = self._part_color
             self.statusBar().showMessage(f"已为零件上色 (颜色: R={int(r*255)} G={int(g*255)} B={int(b*255)})。")
             return
         self._pick_mode = "part_color"
         self.viewport.set_part_picking_mode(True)
         self.viewport.set_picking_active(False)
         self.viewport.set_probe_mode(False)
-        r, g, b = self._face_color
+        r, g, b = self._part_color
         self.statusBar().showMessage(f"请在 3D 视图中点击零件进行上色 (颜色: R={int(r*255)} G={int(g*255)} B={int(b*255)}) …")
     
     def _begin_pick_part(self) -> None:
@@ -655,13 +690,23 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # Color helpers
     # ------------------------------------------------------------------ #
+    def _update_color_button_previews(self) -> None:
+        face_r, face_g, face_b = self._face_color
+        part_r, part_g, part_b = self._part_color
+        self.btn_face_color_pick.setStyleSheet(
+            f"background-color: rgb({int(face_r * 255)}, {int(face_g * 255)}, {int(face_b * 255)});"
+        )
+        self.btn_part_color_pick.setStyleSheet(
+            f"background-color: rgb({int(part_r * 255)}, {int(part_g * 255)}, {int(part_b * 255)});"
+        )
+
     def _choose_face_color(self) -> None:
         from PySide6.QtWidgets import QColorDialog
         from PySide6.QtGui import QColor
         color = QColorDialog.getColor(parent=self)
         if color.isValid():
             self._face_color = (color.redF(), color.greenF(), color.blueF())
-            self.setup_panel.set_face_color_preview(self._face_color)
+            self._update_color_button_previews()
 
     def _choose_part_color(self) -> None:
         from PySide6.QtWidgets import QColorDialog
@@ -669,7 +714,7 @@ class MainWindow(QMainWindow):
         color = QColorDialog.getColor(parent=self)
         if color.isValid():
             self._part_color = (color.redF(), color.greenF(), color.blueF())
-            self.setup_panel.set_part_color_preview(self._part_color)
+            self._update_color_button_previews()
 
     def _clear_face_colors(self) -> None:
         self.viewport.clear_face_colors()

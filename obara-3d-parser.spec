@@ -63,10 +63,14 @@ for pkg in ("vtk", "pyvista", "PySide6", "shiboken6"):
     hiddenimports += h
 
 dlls_to_root = ["Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6OpenGL.dll", "Qt6OpenGLWidgets.dll", "shiboken6.abi3.dll"]
-for i, (src, dst) in enumerate(binaries):
+qt_root_binaries = []
+for i in range(len(binaries) - 1, -1, -1):
+    src, dst = binaries[i]
     filename = os.path.basename(src)
     if filename in dlls_to_root:
-        binaries[i] = (src, ".")
+        qt_root_binaries.append((src, "."))
+        del binaries[i]
+binaries += qt_root_binaries
 
 hiddenimports += ["gmsh"]
 gmsh_dll = _find_gmsh_dll()
@@ -92,6 +96,15 @@ a = Analysis(
         "matplotlib.tests",
     ],
 )
+
+
+def _without_unversioned_icu(toc):
+    """Remove Conda ICU DLLs that shadow Windows system ICU for Qt 6.11."""
+    names = {"icudt.dll", "icuin.dll", "icuuc.dll"}
+    return [entry for entry in toc if os.path.basename(entry[0]).lower() not in names]
+
+
+a.binaries = _without_unversioned_icu(a.binaries)
 
 pyz = PYZ(a.pure, a.zipped_data)
 

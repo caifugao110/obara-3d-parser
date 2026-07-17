@@ -33,7 +33,7 @@ $pyinstallerExe = $null
 if (Test-Path $venvDir) {
     $venvPython = Join-Path (Join-Path $venvDir "Scripts") "python.exe"
     $venvPyinstaller = Join-Path (Join-Path $venvDir "Scripts") "pyinstaller.exe"
-    
+
     if (Test-Path $venvPython) {
         $pythonExe = $venvPython
         Write-Host "  Found virtual environment: $venvDir" -ForegroundColor Green
@@ -44,11 +44,44 @@ if (Test-Path $venvDir) {
 }
 
 if (-not $pythonExe) {
+    Write-Host "  Virtual environment not found. Creating .venv..." -ForegroundColor Yellow
+
     $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
     if (-not $pythonExe) {
-        Write-Error "Python not found. Please install Python 3.13+ or create a virtual environment."
+        Write-Error "Python not found. Please install Python 3.13+."
     }
-    Write-Host "  Using system Python: $pythonExe" -ForegroundColor Yellow
+
+    $pythonVersionOutput = & $pythonExe --version 2>&1
+    if ($pythonVersionOutput -match 'Python (\d+)\.(\d+)') {
+        $major = [int]$matches[1]
+        $minor = [int]$matches[2]
+        if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 13)) {
+            Write-Error "Python version must be 3.13+. Found: $pythonVersionOutput"
+        }
+    }
+
+    Write-Host "  Creating virtual environment with $pythonVersionOutput..." -ForegroundColor Cyan
+    & $pythonExe -m venv $venvDir
+
+    $venvPython = Join-Path (Join-Path $venvDir "Scripts") "python.exe"
+    if (-not (Test-Path $venvPython)) {
+        Write-Error "Failed to create virtual environment at $venvDir"
+    }
+
+    Write-Host "  Upgrading pip..." -ForegroundColor Cyan
+    & $venvPython -m pip install --upgrade pip
+
+    Write-Host "  Installing project dependencies..." -ForegroundColor Cyan
+    & $venvPython -m pip install -e ".[build,dev]"
+
+    $pythonExe = $venvPython
+    $venvPyinstaller = Join-Path (Join-Path $venvDir "Scripts") "pyinstaller.exe"
+    if (Test-Path $venvPyinstaller) {
+        $pyinstallerExe = $venvPyinstaller
+        Write-Host "  Using venv PyInstaller: $pyinstallerExe" -ForegroundColor Green
+    }
+
+    Write-Host "  Virtual environment created successfully: $venvDir" -ForegroundColor Green
 }
 
 if (-not $pyinstallerExe) {
@@ -79,13 +112,21 @@ if (-not (Test-Path $iconFile)) {
 Write-Host "`n[2/6] Cleaning previous build artifacts..." -ForegroundColor Yellow
 
 if (Test-Path $distDir) {
-    Remove-Item -Recurse -Force $distDir
-    Write-Host "  Removed dist directory"
+    try {
+        Remove-Item -Recurse -Force $distDir -ErrorAction Stop
+        Write-Host "  Removed dist directory"
+    } catch {
+        Write-Host "  WARNING: Cannot remove dist directory (files may be in use). Continuing..." -ForegroundColor Yellow
+    }
 }
 
 if (Test-Path $buildDir) {
-    Remove-Item -Recurse -Force $buildDir
-    Write-Host "  Removed build directory"
+    try {
+        Remove-Item -Recurse -Force $buildDir -ErrorAction Stop
+        Write-Host "  Removed build directory"
+    } catch {
+        Write-Host "  WARNING: Cannot remove build directory (files may be in use). Continuing..." -ForegroundColor Yellow
+    }
 }
 
 if (Test-Path $venvDir) {
@@ -96,17 +137,17 @@ Write-Host "`n[3/6] Running PyInstaller..." -ForegroundColor Yellow
 
 Push-Location $projectRoot
 try {
-    $args = @(
+    $pyinstallerArgs = @(
         "--noconfirm",
         "--distpath", "dist",
         "--workpath", "build",
         "obara-3d-parser.spec"
     )
-    
-    Write-Host "  Command: pyinstaller $($args -join ' ')"
-    
-    $process = Start-Process -FilePath $pyinstallerExe -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardOutput "build_log.txt" -RedirectStandardError "build_err.txt"
-    
+
+    Write-Host "  Command: pyinstaller $($pyinstallerArgs -join ' ')"
+
+    $process = Start-Process -FilePath $pyinstallerExe -ArgumentList $pyinstallerArgs -NoNewWindow -Wait -PassThru -RedirectStandardOutput "build_log.txt" -RedirectStandardError "build_err.txt"
+
     if ($process.ExitCode -ne 0) {
         Write-Host "`n=== BUILD FAILED ===" -ForegroundColor Red
         Write-Host "`nBuild errors:" -ForegroundColor Red
@@ -116,9 +157,9 @@ try {
         Remove-Item "build_log.txt", "build_err.txt" -ErrorAction SilentlyContinue
         exit 1
     }
-    
+
     Remove-Item "build_log.txt", "build_err.txt" -ErrorAction SilentlyContinue
-    
+
 } finally {
     Pop-Location
 }
@@ -130,21 +171,25 @@ if (Test-Path $exePath) {
     $sizeMB = [math]::Round($fileInfo.Length / 1MB, 1)
     Write-Host "  EXE created: $exePath" -ForegroundColor Green
     Write-Host "  Size: $sizeMB MB" -ForegroundColor Green
-    
+
     Write-Host "`n  Testing startup..." -ForegroundColor Yellow
-    $proc = Start-Process -FilePath $exePath -NoNewWindow -PassThru
-    Start-Sleep -Seconds 3
-    
-    if ($proc.HasExited) {
-        Write-Host "  WARNING: Process exited with code $($proc.ExitCode)" -ForegroundColor Yellow
-        if ($proc.ExitCode -ne 0) {
-            Write-Host "  Build may have issues. Check if all dependencies are bundled correctly." -ForegroundColor Yellow
+    try {
+        $proc = Start-Process -FilePath $exePath -NoNewWindow -PassThru
+        Start-Sleep -Seconds 3
+
+        if ($proc.HasExited) {
+            Write-Host "  WARNING: Process exited with code $($proc.ExitCode)" -ForegroundColor Yellow
+            if ($proc.ExitCode -ne 0) {
+                Write-Host "  Build may have issues. Check if all dependencies are bundled correctly." -ForegroundColor Yellow
+            }
+        } else {
+            $proc.Kill()
+            Write-Host "  OK: Application started successfully" -ForegroundColor Green
         }
-    } else {
-        $proc.Kill()
-        Write-Host "  OK: Application started successfully" -ForegroundColor Green
+    } catch {
+        Write-Host "  WARNING: Cannot test startup in non-interactive environment. EXE was created successfully." -ForegroundColor Yellow
     }
-    
+
 } else {
     Write-Error "EXE not found at: $exePath"
 }

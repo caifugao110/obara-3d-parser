@@ -23,6 +23,9 @@ desktop.ini
 *.log
 *.tmp
 
+build_log.txt
+build_err.txt
+
 .vscode/
 .idea/
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyvista as pv
-from typing import List, Optional
+from typing import Dict, List, Optional
 import vtk
 
 try:
@@ -79,6 +79,7 @@ class Viewport(QtInteractor):
         self._cs_actors: List = []
         self._selected_face_actor = None
         self._part_highlight_actor = None
+        self._title_actor = None
         self._picking_active = False
         self._probe_mode: Optional[str] = None
         self._part_picking_mode = False
@@ -96,6 +97,23 @@ class Viewport(QtInteractor):
         self._selected_face_id = None
         self._selected_part_idx = None
         self._display_mode = "smooth"
+        self._show_corner_axes()
+
+    def _show_corner_axes(self) -> None:
+        try:
+            self.add_axes(
+                interactive=False,
+                line_width=3,
+                x_color=(1.0, 0.0, 0.0),
+                y_color=(0.0, 0.7, 0.0),
+                z_color=(0.0, 0.2, 1.0),
+                xlabel="X",
+                ylabel="Y",
+                zlabel="Z",
+                viewport=(0.0, 0.0, 0.16, 0.16),
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # Part loading
@@ -117,6 +135,7 @@ class Viewport(QtInteractor):
 
     def clear_scene(self) -> None:
         self.clear()
+        self._show_corner_axes()
         self._main_actor = None
         self._fixture_actors.clear()
         self._load_actors.clear()
@@ -124,6 +143,7 @@ class Viewport(QtInteractor):
         self._cs_actors.clear()
         self._selected_face_actor = None
         self._part_highlight_actor = None
+        self._title_actor = None
         self._surf = None
         self._result = None
         self._face_colors.clear()
@@ -400,7 +420,39 @@ class Viewport(QtInteractor):
                 )
                 self._fixture_actors.append(a)
 
-    def highlight_loads(self, face_ids: List[int]) -> None:
+    def _face_centroid_and_normal(self, face_id: int) -> tuple[np.ndarray, np.ndarray]:
+        if self._part is None or self._part.mesh is None:
+            return np.zeros(3), np.array([0.0, 0.0, 1.0])
+        tris = self._part.mesh.surf_tris[self._part.mesh.tri_to_face == face_id]
+        if len(tris) == 0:
+            return np.zeros(3), np.array([0.0, 0.0, 1.0])
+
+        points = self._part.mesh.points
+        tri_points = points[tris]
+        centroid = tri_points.reshape(-1, 3).mean(axis=0)
+        normals = np.cross(tri_points[:, 1] - tri_points[:, 0], tri_points[:, 2] - tri_points[:, 0])
+        normal = normals.sum(axis=0)
+        norm = float(np.linalg.norm(normal))
+        if norm < 1e-12:
+            normal = np.array([0.0, 0.0, 1.0])
+        else:
+            normal = normal / norm
+        return centroid, normal
+
+    def _load_arrow_direction(self, load) -> np.ndarray:
+        centroid, normal = self._face_centroid_and_normal(int(load.face_id))
+        del centroid
+        force_sign = 1.0 if float(getattr(load, "force", 0.0)) >= 0.0 else -1.0
+        if hasattr(load, "direction"):
+            direction = np.asarray(load.direction, dtype=float) * force_sign
+        else:
+            direction = -normal * force_sign
+        norm = float(np.linalg.norm(direction))
+        if norm < 1e-12:
+            return np.array([0.0, 0.0, 1.0])
+        return direction / norm
+
+    def highlight_loads(self, loads: List) -> None:
         for a in self._load_actors:
             try:
                 self.remove_actor(a)
@@ -409,7 +461,8 @@ class Viewport(QtInteractor):
         self._load_actors.clear()
         if self._part is None:
             return
-        for fid in face_ids:
+        for load in loads:
+            fid = int(getattr(load, "face_id", load))
             sub = _face_submesh(self._part, fid)
             if sub.n_points:
                 a = self.add_mesh(
@@ -417,6 +470,23 @@ class Viewport(QtInteractor):
                     show_edges=True, edge_color=(0.4, 0.0, 0.0), pickable=False,
                 )
                 self._load_actors.append(a)
+                if hasattr(load, "force"):
+                    centroid, _normal = self._face_centroid_and_normal(fid)
+                    direction = self._load_arrow_direction(load)
+                    length = self._scene_scale() * 0.10
+                    start = centroid - direction * length * 0.55
+                    arrow = pv.Arrow(
+                        start=start,
+                        direction=direction,
+                        tip_length=0.28,
+                        tip_radius=0.08,
+                        shaft_radius=0.025,
+                        scale=length,
+                    )
+                    arrow_actor = self.add_mesh(
+                        arrow, color=(1.0, 0.72, 0.05), opacity=1.0, pickable=False,
+                    )
+                    self._load_actors.append(arrow_actor)
 
     # ------------------------------------------------------------------ #
     # Coordinate-system triad
@@ -434,22 +504,17 @@ class Viewport(QtInteractor):
             except Exception:
                 pass
             self._cs_actor = None
-        x = np.asarray(x_axis, dtype=float)
-        y = np.asarray(y_axis, dtype=float)
-        z = np.cross(x, y)
-        scale = max(self._scene_scale() * 0.12, 1e-6)
-        cs_origin = np.asarray(origin, dtype=float)
-        for vec, col, label in ((x, (1, 0, 0), "X"), (y, (0, 1, 0), "Y"), (z, (0, 0, 1), "Z")):
-            v = vec / (np.linalg.norm(vec) + 1e-30) * scale
-            arrow = pv.Arrow(start=cs_origin, direction=v)
-            self._cs_actors.append(self.add_mesh(arrow, color=col, pickable=False))
-            label_pos = cs_origin + v * 1.1
-            self._cs_actors.append(
-                self.add_point_labels(
-                    [label_pos], [label], font_size=12, text_color=col,
-                    shape_opacity=0.0, show_points=False, pickable=False,
-                )
-            )
+        self._show_corner_axes()
+
+    def set_view_title(self, title: str) -> None:
+        if self._title_actor is not None:
+            try:
+                self.remove_actor(self._title_actor)
+            except Exception:
+                pass
+            self._title_actor = None
+        if title:
+            self._title_actor = self.add_text(title, font_size=10)
 
     def _scene_scale(self) -> float:
         if self._part is None or self._part.mesh is None or self._part.mesh.points.size == 0:
@@ -583,7 +648,8 @@ class Viewport(QtInteractor):
         return pts
 
     def show_displacement(self, result: FEAResult, deformed: bool = False,
-                          scale: float = 1.0, component: str = "magnitude") -> None:
+                          scale: float = 1.0, component: str = "magnitude",
+                          title: Optional[str] = None) -> None:
         if self._part is None or self._part.mesh is None:
             return
         self._result = result
@@ -600,19 +666,19 @@ class Viewport(QtInteractor):
         if component_key in {"x", "ux"}:
             scalar_name = "UX displacement (mm)"
             scalar_values = result.displacements[:, 0] * 1000.0
-            title = "UX displacement ISO"
+            default_title = "UX displacement ISO"
         elif component_key in {"y", "uy"}:
             scalar_name = "UY displacement (mm)"
             scalar_values = result.displacements[:, 1] * 1000.0
-            title = "UY displacement ISO"
+            default_title = "UY displacement ISO"
         elif component_key in {"z", "uz"}:
             scalar_name = "UZ displacement (mm)"
             scalar_values = result.displacements[:, 2] * 1000.0
-            title = "UZ displacement ISO"
+            default_title = "UZ displacement ISO"
         else:
             scalar_name = "Resultant displacement (mm)"
             scalar_values = result.disp_magnitude * 1000.0
-            title = "Resultant displacement ISO"
+            default_title = "Resultant displacement ISO"
         surf[scalar_name] = scalar_values
         for a in self._fixture_actors + self._load_actors:
             try:
@@ -629,10 +695,10 @@ class Viewport(QtInteractor):
             surf, scalars=scalar_name, cmap="jet", show_edges=False,
             opacity=1.0, pickable=True, scalar_bar_args={"title": scalar_name},
         )
-        self.add_text(title, font_size=10)
+        self.set_view_title(title if title is not None else default_title)
 
     def show_stress(self, result: FEAResult, deformed: bool = False,
-                          scale: float = 1.0) -> None:
+                          scale: float = 1.0, title: Optional[str] = None) -> None:
         if self._part is None or self._part.mesh is None:
             return
         self._result = result
@@ -660,7 +726,7 @@ class Viewport(QtInteractor):
             surf, scalars="von Mises (MPa)", cmap="jet", show_edges=False,
             opacity=1.0, pickable=True, scalar_bar_args={"title": "von Mises (MPa)"},
         )
-        self.add_text("应力 ISO 图", font_size=10)
+        self.set_view_title(title if title is not None else "应力 ISO 图")
 
     def reset_camera(self) -> None:
         if self._part is not None:

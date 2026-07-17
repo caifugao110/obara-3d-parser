@@ -78,7 +78,7 @@ class _SolveWorker(QObject):
 # Small dialog for entering external force value
 # --------------------------------------------------------------------------- #
 class _LoadDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, load=None):
         super().__init__(parent)
         self.setWindowTitle("定义载荷")
         form = QFormLayout(self)
@@ -128,6 +128,15 @@ class _LoadDialog(QDialog):
 
         self.radio_normal.toggled.connect(update_dir_enabled)
         self.radio_direction.toggled.connect(update_dir_enabled)
+        if load is not None:
+            self.value_spin.setValue(float(load.force))
+            if hasattr(load, "direction"):
+                self.radio_direction.setChecked(True)
+                self.dir_x.setValue(float(load.direction[0]))
+                self.dir_y.setValue(float(load.direction[1]))
+                self.dir_z.setValue(float(load.direction[2]))
+            else:
+                self.radio_normal.setChecked(True)
         update_dir_enabled()
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -155,7 +164,8 @@ class _LoadDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self, material_db_path: str):
         super().__init__()
-        self.setWindowTitle("obara-3d-parser - 简易版 SolidWorks 仿真")
+        self._base_window_title = "obara-3d-parser - 简易版 SolidWorks 仿真"
+        self.setWindowTitle(self._base_window_title)
         self.resize(1400, 900)
 
         self.study = Study()
@@ -167,6 +177,7 @@ class MainWindow(QMainWindow):
         self._current_part_idx = 0
         self._edit_fixture_idx = -1
         self._edit_load_idx = -1
+        self._pending_edit_load = None
         self._face_color = (0.8, 0.2, 0.2)
         self._part_color = (0.2, 0.2, 0.8)
 
@@ -241,29 +252,6 @@ class MainWindow(QMainWindow):
         self.a_mesh.setEnabled(False)
         tb.addAction(self.a_mesh)
 
-        a_disp = QAction("合成位移", self)
-        a_disp.triggered.connect(lambda: self._set_display_mode("disp"))
-        tb.addAction(a_disp)
-
-        a_disp_x = QAction("X位移", self)
-        a_disp_x.triggered.connect(lambda: self._set_display_mode("disp_x"))
-        tb.addAction(a_disp_x)
-
-        a_disp_y = QAction("Y位移", self)
-        a_disp_y.triggered.connect(lambda: self._set_display_mode("disp_y"))
-        tb.addAction(a_disp_y)
-
-        a_disp_z = QAction("Z位移", self)
-        a_disp_z.triggered.connect(lambda: self._set_display_mode("disp_z"))
-        tb.addAction(a_disp_z)
-
-        a_stress = QAction("应力 ISO", self)
-        a_stress.triggered.connect(lambda: self._set_display_mode("stress"))
-        tb.addAction(a_stress)
-        a_probe = QAction("探测模式", self)
-        a_probe.triggered.connect(self._toggle_probe_mode)
-        tb.addAction(a_probe)
-
         a_reset = QAction("重置视图", self)
         a_reset.triggered.connect(self.viewport.reset_camera)
         tb.addAction(a_reset)
@@ -276,16 +264,17 @@ class MainWindow(QMainWindow):
         a_clear_panels.triggered.connect(self._clear_panels)
         tb.addAction(a_clear_panels)
 
-        tb.addSeparator()
+        a_disp = QAction("位移 ISO", self)
+        a_disp.triggered.connect(lambda: self._set_display_mode("disp"))
+        tb.addAction(a_disp)
 
-        a_run = QAction("▶ 运行仿真", self)
-        a_run.triggered.connect(self._run_simulation)
-        tb.addAction(a_run)
+        a_stress = QAction("应力 ISO", self)
+        a_stress.triggered.connect(lambda: self._set_display_mode("stress"))
+        tb.addAction(a_stress)
 
-        tb.addSeparator()
-        self.btn_select_part = QPushButton("选择零件")
-        self.btn_select_part.clicked.connect(self._begin_pick_part)
-        tb.addWidget(self.btn_select_part)
+        a_probe = QAction("探测模式", self)
+        a_probe.triggered.connect(self._toggle_probe_mode)
+        tb.addAction(a_probe)
 
         tb.addSeparator()
         self.btn_face_color_pick = QPushButton("面颜色")
@@ -295,7 +284,7 @@ class MainWindow(QMainWindow):
         a_face_color_apply = QAction("应用面颜色", self)
         a_face_color_apply.triggered.connect(self._begin_pick_color)
         tb.addAction(a_face_color_apply)
-        a_face_color_clear = QAction("清除面颜色", self)
+        a_face_color_clear = QAction("清除所有面颜色", self)
         a_face_color_clear.triggered.connect(self._clear_face_colors)
         tb.addAction(a_face_color_clear)
 
@@ -306,7 +295,7 @@ class MainWindow(QMainWindow):
         a_part_color_apply = QAction("应用零件颜色", self)
         a_part_color_apply.triggered.connect(self._begin_pick_part_color)
         tb.addAction(a_part_color_apply)
-        a_part_color_clear = QAction("清除零件颜色", self)
+        a_part_color_clear = QAction("清除所有零件颜色", self)
         a_part_color_clear.triggered.connect(self._clear_part_colors)
         tb.addAction(a_part_color_clear)
         self._update_color_button_previews()
@@ -322,9 +311,6 @@ class MainWindow(QMainWindow):
         m_view.addAction("原始视图", lambda: self._set_display_mode("smooth"))
         m_view.addAction("网格视图", lambda: self._set_display_mode("mesh"))
         m_view.addAction("合成位移 ISO 图", lambda: self._set_display_mode("disp"))
-        m_view.addAction("X 方向位移 ISO 图", lambda: self._set_display_mode("disp_x"))
-        m_view.addAction("Y 方向位移 ISO 图", lambda: self._set_display_mode("disp_y"))
-        m_view.addAction("Z 方向位移 ISO 图", lambda: self._set_display_mode("disp_z"))
         m_view.addAction("应力 ISO 图", lambda: self._set_display_mode("stress"))
         m_view.addAction("探测模式", self._toggle_probe_mode)
         m_view.addAction("重置视图", self.viewport.reset_camera)
@@ -333,11 +319,14 @@ class MainWindow(QMainWindow):
         m_color = mb.addMenu("颜色设置")
         m_color.addAction("选择面颜色", self._choose_face_color)
         m_color.addAction("应用面颜色", self._begin_pick_color)
-        m_color.addAction("清除面颜色", self._clear_face_colors)
+        m_color.addAction("清除所有面颜色", self._clear_face_colors)
         m_color.addSeparator()
         m_color.addAction("选择零件颜色", self._choose_part_color)
         m_color.addAction("应用零件颜色", self._begin_pick_part_color)
-        m_color.addAction("清除零件颜色", self._clear_part_colors)
+        m_color.addAction("清除所有零件颜色", self._clear_part_colors)
+
+        m_coord = mb.addMenu("解析坐标系")
+        m_coord.addAction("设置解析坐标系", self._edit_coord_system)
 
         m_help = mb.addMenu("帮助")
         m_help.addAction("关于", self._show_about)
@@ -552,20 +541,24 @@ class MainWindow(QMainWindow):
             self._pick_mode = "none"
             self._edit_fixture_idx = -1
             self._refresh_all()
-            self.statusBar().showMessage("Gu ding wei zhi yi geng xin")
+            self.statusBar().showMessage("固定位置已更新")
         elif self._pick_mode == "edit_load":
             idx = self._edit_load_idx
-            if 0 <= idx < len(self.study.loads):
+            pending = self._pending_edit_load
+            if 0 <= idx < len(self.study.loads) and pending is not None:
                 old_ld = self.study.loads[idx]
-                if isinstance(old_ld, PressureLoad):
-                    self.study.loads[idx] = PressureLoad(face_id=face_id, force=old_ld.force, name=old_ld.name)
+                if pending["is_normal"]:
+                    self.study.loads[idx] = PressureLoad(face_id=face_id, force=pending["force"], name=old_ld.name)
                 else:
-                    self.study.loads[idx] = ForceLoad(face_id=face_id, force=old_ld.force, direction=old_ld.direction, name=old_ld.name)
+                    self.study.loads[idx] = ForceLoad(
+                        face_id=face_id, force=pending["force"], direction=pending["direction"], name=old_ld.name
+                    )
             self.viewport.set_picking_active(False)
             self._pick_mode = "none"
             self._edit_load_idx = -1
+            self._pending_edit_load = None
             self._refresh_all()
-            self.statusBar().showMessage("Zai he yi geng xin")
+            self.statusBar().showMessage("载荷位置和大小已更新")
 
     def _begin_pick_color(self) -> None:
         if self.study.part is None:
@@ -671,6 +664,46 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # Edit fixtures / loads via viewport re-picking
     # ------------------------------------------------------------------ #
+    def _edit_coord_system(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("设置解析坐标系")
+        form = QFormLayout(dlg)
+
+        def spin(value: float, min_value: float, max_value: float, decimals: int) -> QDoubleSpinBox:
+            sb = QDoubleSpinBox()
+            sb.setRange(min_value, max_value)
+            sb.setDecimals(decimals)
+            sb.setValue(float(value))
+            return sb
+
+        cs = self.study.coord_system
+        ox = spin(cs.origin[0], -1e6, 1e6, 3)
+        oy = spin(cs.origin[1], -1e6, 1e6, 3)
+        oz = spin(cs.origin[2], -1e6, 1e6, 3)
+        xx = spin(cs.x_axis[0], -1, 1, 4)
+        xy = spin(cs.x_axis[1], -1, 1, 4)
+        xz = spin(cs.x_axis[2], -1, 1, 4)
+        yx = spin(cs.y_axis[0], -1, 1, 4)
+        yy = spin(cs.y_axis[1], -1, 1, 4)
+        yz = spin(cs.y_axis[2], -1, 1, 4)
+
+        form.addRow("原点 X / Y / Z:", StudySetupPanel._row(ox, oy, oz))
+        form.addRow("X轴:", StudySetupPanel._row(xx, xy, xz))
+        form.addRow("Y轴:", StudySetupPanel._row(yx, yy, yz))
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        form.addRow(btns)
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        self.study.coord_system = CoordSystem(
+            origin=np.array([ox.value(), oy.value(), oz.value()]),
+            x_axis=np.array([xx.value(), xy.value(), xz.value()]),
+            y_axis=np.array([yx.value(), yy.value(), yz.value()]),
+        )
+        self._on_coord_changed()
+
     def _on_edit_fixture(self, idx: int) -> None:
         if self.study.part is None:
             return
@@ -682,6 +715,17 @@ class MainWindow(QMainWindow):
     def _on_edit_load(self, idx: int) -> None:
         if self.study.part is None:
             return
+        if idx < 0 or idx >= len(self.study.loads):
+            return
+        old_load = self.study.loads[idx]
+        dlg = _LoadDialog(self, old_load)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self._pending_edit_load = {
+            "force": dlg.value(),
+            "is_normal": dlg.is_normal(),
+            "direction": dlg.direction(),
+        }
         self._pick_mode = "edit_load"
         self._edit_load_idx = idx
         self.viewport.set_picking_active(True)
@@ -827,20 +871,28 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # Display mode
     # ------------------------------------------------------------------ #
+    def _set_view_title(self, title: str) -> None:
+        self.setWindowTitle(title)
+        self.viewport.set_view_title(title)
+
     def _set_display_mode(self, mode: str) -> None:
         if self.study.part is None:
             return
         self._display_mode = mode
         if mode == "smooth":
             self.viewport.show_smooth_mode()
+            self._set_view_title("原始视图")
             self._refresh_highlights()
         elif mode == "mesh":
             self.viewport.show_mesh_mode()
+            self._set_view_title("网格视图")
             self._refresh_highlights()
         elif mode in {"disp", "disp_x", "disp_y", "disp_z"}:
             if self.study.result is None:
                 QMessageBox.information(self, "提示", "请先运行仿真。")
                 return
+            title = "位移 ISO 图"
+            self.setWindowTitle(title)
             component = {
                 "disp": "magnitude",
                 "disp_x": "x",
@@ -848,13 +900,20 @@ class MainWindow(QMainWindow):
                 "disp_z": "z",
             }[mode]
             self.viewport.show_displacement(
-                self.study.result, deformed=False, component=component
+                self.study.result, deformed=False, component=component, title=title
             )
+            if mode == "disp":
+                max_xyz = np.max(np.abs(self.study.result.displacements), axis=0) * 1000.0
+                self.statusBar().showMessage(
+                    f"位移 ISO: UX={max_xyz[0]:.6f} mm, UY={max_xyz[1]:.6f} mm, UZ={max_xyz[2]:.6f} mm；探测模式可查看点位移"
+                )
         elif mode == "stress":
             if self.study.result is None:
                 QMessageBox.information(self, "提示", "请先运行仿真。")
                 return
-            self.viewport.show_stress(self.study.result, deformed=False)
+            title = "应力 ISO 图"
+            self.setWindowTitle(title)
+            self.viewport.show_stress(self.study.result, deformed=False, title=title)
 
     # ------------------------------------------------------------------ #
     # Refresh helpers
@@ -870,7 +929,7 @@ class MainWindow(QMainWindow):
         if self.study.part is None:
             return
         self.viewport.highlight_fixtures([f.face_id for f in self.study.fixtures])
-        self.viewport.highlight_loads([l.face_id for l in self.study.loads])
+        self.viewport.highlight_loads(self.study.loads)
         if self.viewport._selected_face_id is not None:
             self.viewport.highlight_selected_face(self.viewport._selected_face_id)
 

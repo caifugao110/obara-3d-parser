@@ -160,16 +160,7 @@ class StudySetupPanel(QDockWidget):
         v = QVBoxLayout(container)
         v.setContentsMargins(6, 6, 6, 6)
 
-        self.tabs = QTabWidget()
-        v.addWidget(self.tabs)
-
-        part_tab = QWidget()
-        part_layout = QVBoxLayout(part_tab)
-        part_layout.setContentsMargins(6, 6, 6, 6)
-
-        setup_tab = QWidget()
-        setup_layout = QVBoxLayout(setup_tab)
-        setup_layout.setContentsMargins(6, 6, 6, 6)
+        setup_layout = v
 
         # --- part info ---
         gb_part = QGroupBox("零件与材质")
@@ -182,9 +173,7 @@ class StudySetupPanel(QDockWidget):
         f_part.addRow("数模:", self.lbl_part)
         f_part.addRow("材质:", self.material_list)
         f_part.addRow("网格:", self.lbl_mesh)
-        part_layout.addWidget(gb_part)
-        part_layout.addStretch(1)
-        self.tabs.addTab(part_tab, "零件与材质")
+        setup_layout.addWidget(gb_part)
 
         # --- fixtures ---
         gb_fix = QGroupBox("固定位置 (约束)")
@@ -237,7 +226,7 @@ class StudySetupPanel(QDockWidget):
                    self.cs_xx, self.cs_xy, self.cs_xz,
                    self.cs_yx, self.cs_yy, self.cs_yz):
             sb.valueChanged.connect(self._push_coord)
-        setup_layout.addWidget(gb_cs)
+        gb_cs.hide()
 
         # --- mesh density ---
         gb_mesh = QGroupBox("网格密度")
@@ -290,7 +279,6 @@ class StudySetupPanel(QDockWidget):
         self.simulation_log.setStyleSheet("font-size:11px;")
         setup_layout.addWidget(self.simulation_log)
         setup_layout.addStretch(1)
-        self.tabs.addTab(setup_tab, "分析设置")
         self.setWidget(container)
 
     @staticmethod
@@ -436,7 +424,7 @@ class ResultsPanel(QDockWidget):
 
         self.summary = QTextEdit()
         self.summary.setReadOnly(True)
-        self.summary.setMinimumHeight(180)
+        self.summary.setMinimumHeight(0)
         v.addWidget(self.summary, 0)
 
         self.face_table = QTextEdit()
@@ -460,9 +448,10 @@ class ResultsPanel(QDockWidget):
             f"</table>"
         )
         self.summary.setHtml(html)
+        self.summary.document().setDocumentMargin(0)
         self.summary.document().setTextWidth(self.summary.viewport().width())
         doc_height = self.summary.document().size().height()
-        self.summary.setFixedHeight(int(doc_height) + 20)
+        self.summary.setFixedHeight(int(doc_height) + 6)
 
         rows = ""
         for r in result.loaded_face_reports:

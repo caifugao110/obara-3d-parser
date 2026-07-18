@@ -37,6 +37,7 @@ FIXTURE_COLOR = (0.9, 0.2, 0.2)
 LOAD_COLOR = (0.2, 0.2, 0.9)
 SELECTED_COLOR = (0.2, 0.8, 0.2)
 PART_HIGHLIGHT_COLOR = (0.8, 0.8, 0.2)
+PROBE_POINT_COLOR = (1.0, 0.85, 0.0)
 
 
 def _surface_polydata(part: Part) -> pv.PolyData:
@@ -48,6 +49,28 @@ def _surface_polydata(part: Part) -> pv.PolyData:
         return pv.PolyData(pts)
     faces = np.hstack([np.full((len(tris), 1), 3), tris]).ravel()
     return pv.PolyData(pts, faces)
+
+
+def _cad_edge_polydata(part: Part) -> pv.PolyData:
+    if part.mesh is None or len(part.mesh.surf_tris) == 0:
+        return pv.PolyData()
+
+    edge_faces: Dict[tuple[int, int], set[int]] = {}
+    for tri, face_id in zip(part.mesh.surf_tris, part.mesh.tri_to_face):
+        tri_edges = ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0]))
+        for a, b in tri_edges:
+            edge = tuple(sorted((int(a), int(b))))
+            edge_faces.setdefault(edge, set()).add(int(face_id))
+
+    cad_edges = [edge for edge, face_ids in edge_faces.items() if len(face_ids) != 1]
+    if not cad_edges:
+        cad_edges = [edge for edge, face_ids in edge_faces.items() if len(face_ids) == 1]
+
+    poly = pv.PolyData()
+    poly.points = part.mesh.points
+    if cad_edges:
+        poly.lines = np.asarray([[2, a, b] for a, b in cad_edges], dtype=np.int64).ravel()
+    return poly
 
 
 def _face_submesh(part: Part, face_id: int) -> pv.PolyData:
@@ -73,8 +96,10 @@ class Viewport(QtInteractor):
         self._part: Optional[Part] = None
         self._surf: Optional[pv.PolyData] = None
         self._main_actor = None
+        self._edge_actor = None
         self._fixture_actors: List = []
         self._load_actors: List = []
+        self._probe_point_actors: List = []
         self._cs_actor = None
         self._cs_actors: List = []
         self._selected_face_actor = None
@@ -88,15 +113,16 @@ class Viewport(QtInteractor):
         self._deformed = False
         self._deform_scale = 1.0
         self._picker = vtk.vtkCellPicker()
-        self._picker.SetTolerance(0.005)
+        self._picker.SetTolerance(0.015)
         self._point_picker = vtk.vtkPointPicker()
-        self._point_picker.SetTolerance(0.005)
+        self._point_picker.SetTolerance(0.015)
         self._face_colors: Dict[int, tuple] = {}
         self._part_colors: Dict[int, tuple] = {}
         self._default_color = (0.6, 0.6, 0.6)
         self._selected_face_id = None
         self._selected_part_idx = None
         self._display_mode = "smooth"
+        self._show_cad_edges = False
         self._show_corner_axes()
 
     def _show_corner_axes(self) -> None:
@@ -121,24 +147,59 @@ class Viewport(QtInteractor):
     def set_part(self, part: Part, show_edges: bool = False, smooth_shading: bool = True) -> None:
         self.clear_scene()
         self._part = part
+        self._show_cad_edges = show_edges
         if part.mesh is not None:
             self._surf = _surface_polydata(part)
             self._main_actor = self.add_mesh(
-                self._surf, color="lightgrey", show_edges=show_edges, edge_color=(0.4, 0.4, 0.4),
+                self._surf, color="lightgrey", show_edges=False,
                 line_width=0.5, opacity=0.9, pickable=True, smooth_shading=smooth_shading,
             )
+            self._add_cad_edge_actor()
         else:
             self._surf = None
             self._main_actor = None
         self.reset_camera_clipping_range()
         self.view_isometric()
+        self.camera.Zoom(1.25)
+
+    def _camera_state(self) -> Optional[dict]:
+        try:
+            camera = self.camera
+            return {
+                "position": tuple(camera.GetPosition()),
+                "focal_point": tuple(camera.GetFocalPoint()),
+                "view_up": tuple(camera.GetViewUp()),
+                "parallel_scale": float(camera.GetParallelScale()),
+                "view_angle": float(camera.GetViewAngle()),
+                "parallel_projection": int(camera.GetParallelProjection()),
+            }
+        except Exception:
+            return None
+
+    def _restore_camera_state(self, state: Optional[dict]) -> None:
+        if not state:
+            return
+        try:
+            camera = self.camera
+            camera.SetPosition(state["position"])
+            camera.SetFocalPoint(state["focal_point"])
+            camera.SetViewUp(state["view_up"])
+            camera.SetParallelScale(state["parallel_scale"])
+            camera.SetViewAngle(state["view_angle"])
+            camera.SetParallelProjection(state["parallel_projection"])
+            self.reset_camera_clipping_range()
+            self.render()
+        except Exception:
+            pass
 
     def clear_scene(self) -> None:
         self.clear()
         self._show_corner_axes()
         self._main_actor = None
+        self._edge_actor = None
         self._fixture_actors.clear()
         self._load_actors.clear()
+        self._probe_point_actors.clear()
         self._cs_actor = None
         self._cs_actors.clear()
         self._selected_face_actor = None
@@ -149,6 +210,48 @@ class Viewport(QtInteractor):
         self._face_colors.clear()
         self._part_colors.clear()
         self._selected_face_id = None
+        self._selected_part_idx = None
+
+    def _remove_actor(self, actor) -> None:
+        if actor is not None:
+            try:
+                self.remove_actor(actor)
+            except Exception:
+                pass
+
+    def _remove_cad_edge_actor(self) -> None:
+        self._remove_actor(self._edge_actor)
+        self._edge_actor = None
+
+    def _add_cad_edge_actor(self) -> None:
+        self._remove_cad_edge_actor()
+        if not self._show_cad_edges or self._part is None or self._part.mesh is None:
+            return
+        edges = _cad_edge_polydata(self._part)
+        if edges.n_cells == 0:
+            return
+        self._edge_actor = self.add_mesh(
+            edges,
+            color=(0.18, 0.18, 0.18),
+            line_width=2.0,
+            pickable=False,
+        )
+
+    def clear_probe_markers(self) -> None:
+        for actor in self._probe_point_actors:
+            self._remove_actor(actor)
+        self._probe_point_actors.clear()
+
+    def _clear_highlight_actors(self) -> None:
+        self._remove_actor(self._selected_face_actor)
+        self._selected_face_actor = None
+        self._selected_face_id = None
+        self._remove_actor(self._part_highlight_actor)
+        self._part_highlight_actor = None
+        self._selected_part_idx = None
+
+    def set_result(self, result: Optional[FEAResult]) -> None:
+        self._result = result
 
     def apply_face_color(self, face_id: int, color: tuple) -> None:
         self._face_colors[face_id] = color
@@ -160,6 +263,7 @@ class Viewport(QtInteractor):
 
     def clear_face_colors(self) -> None:
         self._face_colors.clear()
+        self._clear_highlight_actors()
         if self._part is not None and self._part.mesh is not None:
             if self._display_mode == "smooth":
                 self.show_smooth_mode()
@@ -176,6 +280,7 @@ class Viewport(QtInteractor):
     
     def clear_part_colors(self) -> None:
         self._part_colors.clear()
+        self._clear_highlight_actors()
         if self._part is not None and self._part.mesh is not None:
             if self._display_mode == "smooth":
                 self.show_smooth_mode()
@@ -185,6 +290,7 @@ class Viewport(QtInteractor):
     def clear_all_colors(self) -> None:
         self._face_colors.clear()
         self._part_colors.clear()
+        self._clear_highlight_actors()
         if self._part is not None and self._part.mesh is not None:
             if self._display_mode == "smooth":
                 self.show_smooth_mode()
@@ -209,6 +315,37 @@ class Viewport(QtInteractor):
     def set_stress_probe_mode(self, active: bool) -> None:
         self._probe_mode = "stress" if active else None
 
+    def _probe_marker_radius(self) -> float:
+        if self._part is None or self._part.mesh is None or self._part.mesh.points.size == 0:
+            return 1.0
+        bounds = self._part.mesh.points.max(axis=0) - self._part.mesh.points.min(axis=0)
+        diagonal = float(np.linalg.norm(bounds))
+        return max(diagonal * 0.004, 0.25)
+
+    def _add_probe_marker(self, point_id: int) -> None:
+        if self._part is None or self._part.mesh is None:
+            return
+        display_points = self._part.mesh.points
+        if self._deformed and self._result is not None:
+            display_points = self._deformed_points(self._result, self._deform_scale)
+        if point_id < 0 or point_id >= len(display_points):
+            return
+        sphere = pv.Sphere(
+            radius=self._probe_marker_radius(),
+            center=display_points[point_id],
+            theta_resolution=16,
+            phi_resolution=16,
+        )
+        actor = self.add_mesh(
+            sphere,
+            color=PROBE_POINT_COLOR,
+            opacity=1.0,
+            pickable=False,
+            name=f"probe-point-{len(self._probe_point_actors)}",
+            reset_camera=False,
+        )
+        self._probe_point_actors.append(actor)
+
     def set_part_picking_mode(self, active: bool) -> None:
         self._part_picking_mode = active
         self._picking_active = not active
@@ -217,6 +354,7 @@ class Viewport(QtInteractor):
         self._auto_part_select = active
     
     def highlight_selected_face(self, face_id: int) -> None:
+        camera_state = self._camera_state()
         if self._selected_face_actor is not None:
             try:
                 self.remove_actor(self._selected_face_actor)
@@ -226,6 +364,7 @@ class Viewport(QtInteractor):
         
         if self._part is None or face_id < 0:
             self._selected_face_id = None
+            self._restore_camera_state(camera_state)
             return
         
         self._selected_face_id = face_id
@@ -234,7 +373,9 @@ class Viewport(QtInteractor):
             self._selected_face_actor = self.add_mesh(
                 sub, color=SELECTED_COLOR, opacity=0.7,
                 show_edges=True, edge_color=(0.0, 0.6, 0.0), pickable=False,
+                reset_camera=False,
             )
+        self._restore_camera_state(camera_state)
     
     def highlight_part(self, part_idx: int, parts: list = None) -> None:
         if self._part_highlight_actor is not None:
@@ -243,6 +384,7 @@ class Viewport(QtInteractor):
             except Exception:
                 pass
             self._part_highlight_actor = None
+        self._remove_cad_edge_actor()
         
         if self._part is None or self._part.mesh is None:
             return
@@ -331,6 +473,7 @@ class Viewport(QtInteractor):
         disp_mag = self._result.disp_magnitude[point_id] * 1000
         stress = self._result.von_mises[point_id] / 1e6
         coords = self._part.mesh.points[point_id]
+        self._add_probe_marker(point_id)
         self.probe_data.emit({
             "point_id": int(point_id),
             "coords": coords.tolist(),
@@ -403,6 +546,7 @@ class Viewport(QtInteractor):
     # Highlighting
     # ------------------------------------------------------------------ #
     def highlight_fixtures(self, face_ids: List[int]) -> None:
+        camera_state = self._camera_state()
         for a in self._fixture_actors:
             try:
                 self.remove_actor(a)
@@ -410,6 +554,7 @@ class Viewport(QtInteractor):
                 pass
         self._fixture_actors.clear()
         if self._part is None:
+            self._restore_camera_state(camera_state)
             return
         for fid in face_ids:
             sub = _face_submesh(self._part, fid)
@@ -417,8 +562,10 @@ class Viewport(QtInteractor):
                 a = self.add_mesh(
                     sub, color=FIXTURE_COLOR, opacity=0.85,
                     show_edges=True, edge_color=(0.6, 0.0, 0.0), pickable=False,
+                    reset_camera=False,
                 )
                 self._fixture_actors.append(a)
+        self._restore_camera_state(camera_state)
 
     def _face_centroid_and_normal(self, face_id: int) -> tuple[np.ndarray, np.ndarray]:
         if self._part is None or self._part.mesh is None:
@@ -453,6 +600,7 @@ class Viewport(QtInteractor):
         return direction / norm
 
     def highlight_loads(self, loads: List) -> None:
+        camera_state = self._camera_state()
         for a in self._load_actors:
             try:
                 self.remove_actor(a)
@@ -460,6 +608,7 @@ class Viewport(QtInteractor):
                 pass
         self._load_actors.clear()
         if self._part is None:
+            self._restore_camera_state(camera_state)
             return
         for load in loads:
             fid = int(getattr(load, "face_id", load))
@@ -468,6 +617,7 @@ class Viewport(QtInteractor):
                 a = self.add_mesh(
                     sub, color=LOAD_COLOR, opacity=0.85,
                     show_edges=True, edge_color=(0.4, 0.0, 0.0), pickable=False,
+                    reset_camera=False,
                 )
                 self._load_actors.append(a)
                 if hasattr(load, "force"):
@@ -485,8 +635,10 @@ class Viewport(QtInteractor):
                     )
                     arrow_actor = self.add_mesh(
                         arrow, color=(1.0, 0.72, 0.05), opacity=1.0, pickable=False,
+                        reset_camera=False,
                     )
                     self._load_actors.append(arrow_actor)
+        self._restore_camera_state(camera_state)
 
     # ------------------------------------------------------------------ #
     # Coordinate-system triad
@@ -570,6 +722,7 @@ class Viewport(QtInteractor):
                     self._surf, color="lightgrey", show_edges=False,
                     line_width=0.5, opacity=0.9, pickable=True, smooth_shading=True,
                 )
+            self._add_cad_edge_actor()
         self._result = None
         
         if self._selected_face_id is not None:
@@ -617,6 +770,7 @@ class Viewport(QtInteractor):
             except Exception:
                 pass
             self._selected_face_actor = None
+        self._remove_cad_edge_actor()
         
         if self._part.mesh is not None:
             self._surf = _surface_polydata(self._part)
@@ -731,4 +885,5 @@ class Viewport(QtInteractor):
     def reset_camera(self) -> None:
         if self._part is not None:
             self.view_isometric()
+            self.camera.Zoom(1.25)
 

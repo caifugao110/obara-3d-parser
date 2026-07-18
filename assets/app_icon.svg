@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#15d5ff"/>
+      <stop offset="0.48" stop-color="#193b87"/>
+      <stop offset="1" stop-color="#7b3dff"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="24"/></filter>
+  </defs>
+  <rect x="28" y="28" width="968" height="968" rx="190" fill="url(#bg)"/>
+  <rect x="40" y="40" width="944" height="944" rx="180" fill="none" stroke="#fff" stroke-opacity=".22" stroke-width="14"/>
+  <ellipse cx="520" cy="738" rx="270" ry="92" fill="#000" opacity=".24" filter="url(#shadow)"/>
+  <polygon points="512,300 762,445 512,590 262,445" fill="#47d6ff" opacity=".92"/>
+  <polygon points="262,445 512,590 512,845 262,700" fill="#2077ee" opacity=".95"/>
+  <polygon points="762,445 512,590 512,845 762,700" fill="#724fff" opacity=".95"/>
+  <g fill="none" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M512 300 762 445 512 590 262 445Z M262 445V700L512 845L762 700V445 M512 590V845" stroke="#0d183a" stroke-opacity=".35" stroke-width="30"/>
+    <path d="M512 300 762 445 512 590 262 445Z M262 445V700L512 845L762 700V445 M512 590V845" stroke="#e5f8ff" stroke-width="14"/>
+    <path d="M345 396 595 541 M429 348 679 493 M429 493 512 348 M595 541 679 396 M262 532 512 677 762 532 M262 619 512 764 762 619" stroke="#dcfcff" stroke-opacity=".58" stroke-width="7"/>
+    <path d="M286 347h-50 M236 347a116 116 0 0 1 70-105 M738 690h50 M788 690a116 116 0 0 0-70-105" stroke="#ffcd4a" stroke-width="25"/>
+  </g>
+  <g fill="#fff"><circle cx="512" cy="300" r="22"/><circle cx="262" cy="445" r="18"/><circle cx="762" cy="445" r="18"/><circle cx="512" cy="590" r="20"/><circle cx="512" cy="845" r="18"/></g>
+</svg>

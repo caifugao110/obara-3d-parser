@@ -25,4 +25,4 @@ conda install -y -c conda-forge calculix
 
 ## 备注
 
-使用 `calculix` 后端时，需要确保 CalculiX 已正确安装。UI 会自动生成 `.inp` 文件，提交 CalculiX 求解后读取 FRD/DAT 结果文件，UI 支持直接显示 CalculiX 的求解结果。
+使用 `calculix` 后端时，需要确保 CalculiX 已正确安装。UI 会自动生成 `.inp` 文件并调用 `ccx` 求解，随后优先从 `.dat`、其次从 `.frd` 读取节点位移结果。位移场来自 CalculiX；当前 UI 中的 von Mises 应力仍基于 CalculiX 位移，复用内置 Tet4 后处理逻辑恢复得到。

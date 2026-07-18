@@ -128,6 +128,144 @@ def _element_set_lines(name: str, elem_ids_1based: Iterable[int]) -> List[str]:
     return lines
 
 
+def _parse_float(value: str) -> float:
+    return float(value.replace("D", "E").replace("d", "e"))
+
+
+def _read_calculix_dat_displacements(path: Path, n_nodes: int) -> Optional[np.ndarray]:
+    if not path.exists():
+        return None
+    displacements = np.full((n_nodes, 3), np.nan, dtype=np.float64)
+    found_rows = 0
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        try:
+            node_id = int(parts[0])
+            values = [_parse_float(parts[1]), _parse_float(parts[2]), _parse_float(parts[3])]
+        except ValueError:
+            continue
+        if 1 <= node_id <= n_nodes:
+            displacements[node_id - 1] = values
+            found_rows += 1
+    if found_rows == 0 or np.isnan(displacements).any():
+        return None
+    return displacements
+
+
+def _read_calculix_frd_displacements(path: Path, n_nodes: int) -> Optional[np.ndarray]:
+    if not path.exists():
+        return None
+    displacements = np.full((n_nodes, 3), np.nan, dtype=np.float64)
+    in_displacement_block = False
+    found_rows = 0
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        upper = line.upper()
+        if "DISP" in upper:
+            in_displacement_block = True
+            continue
+        if not in_displacement_block:
+            continue
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == "-3":
+            if found_rows:
+                break
+            in_displacement_block = False
+            continue
+        if parts[0] != "-1" or len(parts) < 5:
+            continue
+        try:
+            node_id = int(parts[1])
+            values = [_parse_float(parts[2]), _parse_float(parts[3]), _parse_float(parts[4])]
+        except ValueError:
+            continue
+        if 1 <= node_id <= n_nodes:
+            displacements[node_id - 1] = values
+            found_rows += 1
+    if found_rows == 0 or np.isnan(displacements).any():
+        return None
+    return displacements
+
+
+def _read_calculix_displacements(job: Path, n_nodes: int) -> np.ndarray:
+    dat_displacements = _read_calculix_dat_displacements(job.with_suffix(".dat"), n_nodes)
+    if dat_displacements is not None:
+        return dat_displacements
+    frd_displacements = _read_calculix_frd_displacements(job.with_suffix(".frd"), n_nodes)
+    if frd_displacements is not None:
+        return frd_displacements
+    raise RuntimeError(
+        "CalculiX 求解完成，但未能读取完整节点位移结果。"
+        "请检查 .dat/.frd 输出，或确认当前 CalculiX 版本支持 *NODE PRINT/*NODE FILE 输出。"
+    )
+
+
+def _result_from_external_displacements(
+    parts: List[Part],
+    loads: List[object],
+    coord_system: Optional[CoordSystem],
+    displacements: np.ndarray,
+    length_scale: float,
+) -> FEAResult:
+    mesh = _require_single_combined_mesh(parts)
+    pts_si = mesh.points.astype(np.float64) * length_scale
+    tets = mesh.tets.astype(np.int64)
+    tet_to_part = mesh.tet_to_part.astype(np.int64)
+    n_nodes = pts_si.shape[0]
+    if displacements.shape != (n_nodes, 3):
+        raise RuntimeError(f"CalculiX 位移数量不匹配: 期望 {(n_nodes, 3)}，实际 {displacements.shape}")
+
+    u = displacements.T.reshape(-1)
+    materials = [p.material for p in parts]
+    nodal_vm, _elem_vm = _recover_stress(pts_si, tets, tet_to_part, u, materials)
+    disp_mag = np.linalg.norm(displacements, axis=1)
+    max_disp = float(disp_mag.max())
+    max_vm = float(nodal_vm.max())
+    positive_yields = [p.material.sigyld for p in parts if p.material and p.material.sigyld > 0]
+    min_sigyld = min(positive_yields) if positive_yields else 0.0
+    safety = float(min_sigyld / max_vm) if (max_vm > 0 and min_sigyld > 0) else float("inf")
+
+    cs = coord_system or CoordSystem()
+    rotation = cs.rotation_to_local()
+    pressure_loads = [load for load in loads if isinstance(load, PressureLoad)]
+    force_loads = [load for load in loads if isinstance(load, ForceLoad)]
+    reports: List[dict] = []
+    for load in pressure_loads + force_loads:
+        face_id = load.face_id
+        tris_idx = np.where(mesh.tri_to_face == face_id)[0]
+        if len(tris_idx) == 0:
+            continue
+        face_nodes = np.unique(mesh.surf_tris[tris_idx].ravel())
+        u_face = displacements[face_nodes].mean(axis=0)
+        u_local = rotation @ u_face
+        centroid = mesh.face_centers[face_id] * length_scale if face_id < len(mesh.face_centers) else np.zeros(3)
+        reports.append({
+            "name": getattr(load, "name", "") or f"面 {face_id}",
+            "face_id": face_id,
+            "centroid_global": centroid.tolist(),
+            "disp_global": u_face.tolist(),
+            "disp_local": u_local.tolist(),
+            "magnitude": float(np.linalg.norm(u_face)),
+            "load_type": "pressure" if isinstance(load, PressureLoad) else "force",
+            "load_value": load.force,
+        })
+
+    return FEAResult(
+        displacements=displacements,
+        disp_magnitude=disp_mag,
+        von_mises=nodal_vm,
+        max_displacement=max_disp,
+        max_von_mises=max_vm,
+        safety_factor=safety,
+        loaded_face_reports=reports,
+        num_nodes=n_nodes,
+        num_tets=mesh.num_tets,
+    )
+
+
 def write_calculix_input(
     path: str | Path,
     parts: List[Part],
@@ -166,6 +304,8 @@ def write_calculix_input(
         n = tet + 1
         lines.append(f"{idx},{n[0]},{n[1]},{n[2]},{n[3]}")
 
+    lines.extend(_node_set_lines("ALLNODES", range(1, mesh.num_nodes + 1)))
+
     for part_idx, part in enumerate(parts):
         elem_ids = np.where(tet_to_part == part_idx)[0] + 1
         if len(elem_ids) == 0:
@@ -202,6 +342,8 @@ def write_calculix_input(
         "U",
         "*EL FILE",
         "S",
+        "*NODE PRINT,NSET=ALLNODES",
+        "U",
         "*END STEP",
         "",
     ])
@@ -217,15 +359,7 @@ def solve_static_calculix(
     progress: Progress = None,
     length_scale: float = 1e-3,
 ) -> FEAResult:
-    """Run CalculiX if available, then return an FEAResult.
-
-    The exporter and external process are implemented now. Robust FRD/DAT result
-    parsing varies by CalculiX build, so this backend currently validates that
-    the high-fidelity deck can run and then recomputes post-processing with the
-    internal compatible solver to provide the same UI result arrays. This keeps
-    the workflow usable while allowing users to inspect the generated ``.inp``
-    and CalculiX output files.
-    """
+    """Run CalculiX and return UI-ready results from its nodal displacements."""
     if progress is None:
         progress = lambda _message: None
     exe = _calculix_executable()
@@ -250,7 +384,9 @@ def solve_static_calculix(
                 f"stdout:\n{completed.stdout[-4000:]}\n"
                 f"stderr:\n{completed.stderr[-4000:]}"
             )
-        progress("CalculiX 求解完成，正在生成 UI 结果场…")
-    result = solve_static(parts, fixtures, loads, coord_system, progress, length_scale)
-    result.solver_message = "CalculiX deck validated; UI fields generated by compatible internal post-processing."
+        progress("CalculiX 求解完成，正在读取节点位移结果…")
+        displacements = _read_calculix_displacements(job, parts[0].mesh.num_nodes)
+        progress("正在用 CalculiX 位移生成 UI 结果场…")
+        result = _result_from_external_displacements(parts, loads, coord_system, displacements, length_scale)
+    result.solver_message = "CalculiX solved the displacement field; stresses recovered for UI display."
     return result

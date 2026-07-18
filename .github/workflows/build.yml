@@ -49,6 +49,27 @@ jobs:
           Write-Host "Generated version: $version"
           echo "version=$version" >> $env:GITHUB_OUTPUT
 
+      - name: Generate changelog from git history
+        id: generate_changelog
+        run: |
+          $lastTag = git describe --tags --abbrev=0 HEAD^ 2>$null
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "No previous tag found, using all commits"
+              $changelog = git log --no-merges --oneline --format="- %s"
+          } else {
+              Write-Host "Previous tag: $lastTag"
+              $changelog = git log --no-merges "$lastTag..HEAD" --oneline --format="- %s"
+          }
+          if (-not $changelog) {
+              $changelog = "- No changes to report"
+          }
+          $changelog = $changelog -join "`n"
+          $changelog = $changelog -replace "`r`n", "`n"
+          Write-Host "Changelog:`n$changelog"
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "changelog<<EOF`n", [System.Text.Encoding]::UTF8)
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, $changelog, [System.Text.Encoding]::UTF8)
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "`nEOF`n", [System.Text.Encoding]::UTF8)
+
       - name: Update pyproject.toml with dynamic version
         run: |
           $version = "${{ steps.generate_version.outputs.version }}"
@@ -131,6 +152,9 @@ jobs:
             
             A lightweight SolidWorks-style FEA simulation software.
             
+            **Changes:**
+            ${{ steps.generate_changelog.outputs.changelog }}
+            
             **Features:**
             - STEP file import with automatic tetrahedral meshing
             - Material database with 100+ materials
@@ -151,6 +175,9 @@ jobs:
             **obara-3d-parser** - ${{ steps.generate_version.outputs.version }}
             
             A lightweight SolidWorks-style FEA simulation software.
+            
+            **Changes:**
+            ${{ steps.generate_changelog.outputs.changelog }}
             
             **Features:**
             - STEP file import with automatic tetrahedral meshing

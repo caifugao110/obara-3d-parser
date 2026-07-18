@@ -23,9 +23,9 @@ from PySide6.QtWidgets import (
 )
 
 from .material_db import load_material_database, load_material_database_from_dir, Material
-from .geometry import load_step, mesh_part, Part
+from .geometry import load_step, make_test_beam, mesh_part, Part
 from .fea import CoordSystem, Fixture, PressureLoad, ForceLoad, FEAResult
-from .solver_backends import solve_study
+from .solver_backends import BACKENDS, solve_study
 from .study import Study
 from .viewport import Viewport
 from .panels import MaterialPanel, StudySetupPanel, ResultsPanel
@@ -304,17 +304,18 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         m_file = mb.addMenu("文件")
         m_file.addAction("导入 STEP 数模…", self._import_step)
+        m_file.addAction("生成测试梁", self._generate_test_beam)
+        m_file.addAction("选择材质库文件夹…", self._select_material_dir)
         m_file.addSeparator()
         m_file.addAction("退出", self.close)
 
         m_view = mb.addMenu("视图")
         m_view.addAction("原始视图", lambda: self._set_display_mode("smooth"))
-        m_view.addAction("网格视图", lambda: self._set_display_mode("mesh"))
-        m_view.addAction("合成位移 ISO 图", lambda: self._set_display_mode("disp"))
-        m_view.addAction("应力 ISO 图", lambda: self._set_display_mode("stress"))
-        m_view.addAction("探测模式", self._toggle_probe_mode)
+        self.a_mesh_menu = m_view.addAction("网格视图", lambda: self._set_display_mode("mesh"))
+        self.a_mesh_menu.setEnabled(False)
         m_view.addAction("重置视图", self.viewport.reset_camera)
         m_view.addAction("重置布局", self._reset_layout)
+        m_view.addAction("清空面板", self._clear_panels)
 
         m_color = mb.addMenu("颜色设置")
         m_color.addAction("选择面颜色", self._choose_face_color)
@@ -351,6 +352,16 @@ class MainWindow(QMainWindow):
             return
         self._set_parts(parts)
         self.statusBar().showMessage(f"已导入 {len(parts)} 个零件 (待网格化)")
+
+    def _generate_test_beam(self) -> None:
+        try:
+            part = make_test_beam()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "生成失败", f"无法生成测试梁:\n{exc}")
+            self.statusBar().showMessage("测试梁生成失败。")
+            return
+        self._set_part(part)
+        self.statusBar().showMessage("已生成测试梁 (待网格化)")
 
     def _select_material_dir(self) -> None:
         dir_path = QFileDialog.getExistingDirectory(
@@ -432,7 +443,7 @@ class MainWindow(QMainWindow):
                     tri_to_part=np.concatenate(tri_to_part_list),
                 )
             parts[0].mesh = display_mesh
-            self.viewport.set_part(parts[0], show_edges=False, smooth_shading=True)
+            self.viewport.set_part(parts[0], show_edges=True, smooth_shading=True)
         
         self.viewport.show_coord_system(
             self.study.coord_system.origin,
@@ -440,7 +451,7 @@ class MainWindow(QMainWindow):
             self.study.coord_system.y_axis,
         )
         self._display_mode = "smooth"
-        self.a_mesh.setEnabled(False)
+        self._set_mesh_view_enabled(False)
         self._refresh_all()
         self.results_panel.clear_result()
         
@@ -477,7 +488,8 @@ class MainWindow(QMainWindow):
 
     def _on_solver_backend_changed(self, backend: str) -> None:
         self.study.solver_backend = backend
-        self.statusBar().showMessage(f"?????????: {backend}")
+        backend_name = BACKENDS.get(backend, BACKENDS["internal"]).name
+        self.statusBar().showMessage(f"已切换求解器后端: {backend_name}")
     # ------------------------------------------------------------------ #
     # Workflow: picking fixtures / loads
     # ------------------------------------------------------------------ #
@@ -617,11 +629,14 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "提示", "请先运行仿真。")
             return
         self._pick_mode = "probe" if self._pick_mode != "probe" else "none"
+        if self._pick_mode == "probe":
+            self.viewport.set_result(self.study.result)
         self.viewport.set_probe_mode(self._pick_mode == "probe")
         self.viewport.set_picking_active(self._pick_mode != "probe")
         if self._pick_mode == "probe":
             self.statusBar().showMessage("探测模式: 请在 3D 视图中点击查看位移和应力数值 …")
         else:
+            self.viewport.clear_probe_markers()
             self.statusBar().showMessage("已退出探测模式。")
     
     def _on_probe_data(self, data: dict) -> None:
@@ -645,21 +660,23 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def _begin_probe_disp(self) -> None:
         if self.study.result is None:
-            QMessageBox.information(self, "\xe6\x8f\x90\xe7\xa4\xba", "\xe8\xaf\xb7\xe5\x85\x88\xe8\xbf\x90\xe8\xa1\x8c\xe4\xbb\xbf\xe7\x9c\x9f\xe3\x80\x82")
+            QMessageBox.information(self, "提示", "请先运行仿真。")
             return
         self._pick_mode = "probe"
+        self.viewport.set_result(self.study.result)
         self.viewport.set_displacement_probe_mode(True)
         self.viewport.set_picking_active(False)
-        self.statusBar().showMessage("\xe4\xbd\x8d\xe7\xa7\xbb\xe6\x8e\xa2\xe6\xb5\x8b\xe6\xa8\xa1\xe5\xbc\x8f: \xe7\x82\xb9\xe5\x87\xbb3D\xe8\xa7\x86\xe5\x9b\xbe\xe6\x9f\xa5\xe7\x9c\x8b\xe4\xbd\x8d\xe7\xa7\xbb\xe5\x80\xbc")
+        self.statusBar().showMessage("位移探测模式: 点击3D视图查看位移值")
 
     def _begin_probe_stress(self) -> None:
         if self.study.result is None:
-            QMessageBox.information(self, "\xe6\x8f\x90\xe7\xa4\xba", "\xe8\xaf\xb7\xe5\x85\x88\xe8\xbf\x90\xe8\xa1\x8c\xe4\xbb\xbf\xe7\x9c\x9f\xe3\x80\x82")
+            QMessageBox.information(self, "提示", "请先运行仿真。")
             return
         self._pick_mode = "probe"
+        self.viewport.set_result(self.study.result)
         self.viewport.set_stress_probe_mode(True)
         self.viewport.set_picking_active(False)
-        self.statusBar().showMessage("\xe5\xba\x94\xe5\x8a\x9b\xe6\x8e\xa2\xe6\xb5\x8b\xe6\xa8\xa1\xe5\xbc\x8f: \xe7\x82\xb9\xe5\x87\xbb3D\xe8\xa7\x86\xe5\x9b\xbe\xe6\x9f\xa5\xe7\x9c\x8b\xe5\xba\x94\xe5\x8a\x9b\xe5\x80\xbc")
+        self.statusBar().showMessage("应力探测模式: 点击3D视图查看应力值")
 
     # ------------------------------------------------------------------ #
     # Edit fixtures / loads via viewport re-picking
@@ -710,7 +727,7 @@ class MainWindow(QMainWindow):
         self._pick_mode = "edit_fixture"
         self._edit_fixture_idx = idx
         self.viewport.set_picking_active(True)
-        self.statusBar().showMessage(f"\xe7\xbc\x96\xe8\xbe\x91\xe5\x9b\xba\xe5\xae\x9a\xe4\xbd\x8d\xe7\xbd\xae #{idx+1}: \xe5\x9c\xa83D\xe8\xa7\x86\xe5\x9b\xbe\xe4\xb8\xad\xe7\x82\xb9\xe5\x87\xbb\xe6\x96\xb0\xe9\x9d\xa2")
+        self.statusBar().showMessage(f"编辑固定位置 #{idx+1}: 在3D视图中点击新面")
 
     def _on_edit_load(self, idx: int) -> None:
         if self.study.part is None:
@@ -729,7 +746,7 @@ class MainWindow(QMainWindow):
         self._pick_mode = "edit_load"
         self._edit_load_idx = idx
         self.viewport.set_picking_active(True)
-        self.statusBar().showMessage(f"\xe7\xbc\x96\xe8\xbe\x91\xe8\xbd\xbd\xe8\x8d\xb7 #{idx+1}: \xe5\x9c\xa83D\xe8\xa7\x86\xe5\x9b\xbe\xe4\xb8\xad\xe7\x82\xb9\xe5\x87\xbb\xe6\x96\xb0\xe9\x9d\xa2")
+        self.statusBar().showMessage(f"编辑载荷 #{idx+1}: 在3D视图中点击新面")
 
     # ------------------------------------------------------------------ #
     # Color helpers
@@ -762,11 +779,11 @@ class MainWindow(QMainWindow):
 
     def _clear_face_colors(self) -> None:
         self.viewport.clear_face_colors()
-        self.statusBar().showMessage("\xe5\xb7\xb2\xe5\x8f\x96\xe6\xb6\x88\xe9\x9d\xa2\xe4\xb8\x8a\xe8\x89\xb2\xe3\x80\x82")
+        self.statusBar().showMessage("已取消面上色。")
 
     def _clear_part_colors(self) -> None:
         self.viewport.clear_part_colors()
-        self.statusBar().showMessage("\xe5\xb7\xb2\xe5\x8f\x96\xe6\xb6\x88\xe9\x9b\xb6\xe4\xbb\xb6\xe4\xb8\x8a\xe8\x89\xb2\xe3\x80\x82")
+        self.statusBar().showMessage("已取消零件上色。")
 
 
     def _remove_fixture(self, idx: int) -> None:
@@ -808,11 +825,15 @@ class MainWindow(QMainWindow):
         QApplication.restoreOverrideCursor()
         self.viewport.set_part(self.study.parts[0], show_edges=True)
         self._set_display_mode("mesh")
-        self.a_mesh.setEnabled(True)
+        self._set_mesh_view_enabled(True)
         self.statusBar().showMessage(
             f"网格化完成: 节点 {combined_mesh.num_nodes} / 单元 {combined_mesh.num_tets} / "
             f"零件数 {len(self.study.parts)}"
         )
+
+    def _set_mesh_view_enabled(self, enabled: bool) -> None:
+        self.a_mesh.setEnabled(enabled)
+        self.a_mesh_menu.setEnabled(enabled)
 
     # ------------------------------------------------------------------ #
     # Workflow: run simulation
@@ -914,6 +935,8 @@ class MainWindow(QMainWindow):
             title = "应力 ISO 图"
             self.setWindowTitle(title)
             self.viewport.show_stress(self.study.result, deformed=False, title=title)
+        if self._pick_mode == "probe" and self.study.result is not None:
+            self.viewport.set_result(self.study.result)
 
     # ------------------------------------------------------------------ #
     # Refresh helpers
@@ -1032,6 +1055,8 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key_Escape and self._pick_mode != "none":
+            if self._pick_mode == "probe":
+                self.viewport.clear_probe_markers()
             self.viewport.set_picking_active(False)
             self._pick_mode = "none"
             self.statusBar().showMessage("已取消拾取。")

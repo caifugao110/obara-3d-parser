@@ -159,6 +159,10 @@ class Viewport(QtInteractor):
             self._surf = None
             self._main_actor = None
         self.reset_camera_clipping_range()
+        # Ensure the camera exists before view_isometric so that the
+        # isometric view is not overridden by reset_camera when self.camera
+        # is accessed below.
+        _ = self.camera
         self.view_isometric()
         self.camera.Zoom(1.25)
 
@@ -882,8 +886,17 @@ class Viewport(QtInteractor):
         )
         self.set_view_title(title if title is not None else "应力 ISO 图")
 
-    def reset_camera(self) -> None:
+    def reset_view(self) -> None:
+        # NOTE: Do not override reset_camera — pyvista's `camera` property
+        # calls self.reset_camera() when the camera is not yet set, which
+        # would recurse into self.camera here and overflow the stack.
         if self._part is not None:
+            # Ensure the camera exists before repositioning it so that
+            # accessing self.camera below does not trigger reset_camera and
+            # override the isometric view set by view_isometric().
+            _ = self.camera
             self.view_isometric()
             self.camera.Zoom(1.25)
+        else:
+            self.reset_camera()
 

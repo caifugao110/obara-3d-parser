@@ -253,7 +253,7 @@ class MainWindow(QMainWindow):
         tb.addAction(self.a_mesh)
 
         a_reset = QAction("重置视图", self)
-        a_reset.triggered.connect(self.viewport.reset_camera)
+        a_reset.triggered.connect(self.viewport.reset_view)
         tb.addAction(a_reset)
 
         a_reset_layout = QAction("重置布局", self)
@@ -313,7 +313,7 @@ class MainWindow(QMainWindow):
         m_view.addAction("原始视图", lambda: self._set_display_mode("smooth"))
         self.a_mesh_menu = m_view.addAction("网格视图", lambda: self._set_display_mode("mesh"))
         self.a_mesh_menu.setEnabled(False)
-        m_view.addAction("重置视图", self.viewport.reset_camera)
+        m_view.addAction("重置视图", self.viewport.reset_view)
         m_view.addAction("重置布局", self._reset_layout)
         m_view.addAction("清空面板", self._clear_panels)
 
